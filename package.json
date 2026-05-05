@@ -1,0 +1,17 @@
+{
+  "name": "adspower",
+  "version": "1.0.0",
+  "description": "Google Ads clicker with AdsPower anti-detect browser",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "profiles": "node src/list-profiles.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "puppeteer-core": "^24.42.0"
+  }
+}

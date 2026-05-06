@@ -1,7 +1,7 @@
 const { config } = require("./config");
 const { logRanking, logNotFound } = require("./ranking-logger");
 const clickCounter = require("./click-counter");
-const { state: stats } = require("./stats");
+const { recordAd, recordHit } = require("./stats");
 
 const GOOGLE_URL = "https://www.google.com";
 
@@ -130,9 +130,11 @@ async function scanPage(page, adDomains, hitDomains) {
 
   // Reklamları bul (hit domainlerini hariç tut)
   const adElements = await page.$$("a[data-pcu]");
+  const allAdDomains = new Set();
   for (const el of adElements) {
     const pcu = await el.evaluate((e) => e.getAttribute("data-pcu") || "");
     const domain = extractDomain(pcu);
+    if (domain) allAdDomains.add(domain);
     const isHitDomain = hitDomains.some((d) => domain.includes(d));
     if (isHitDomain) continue;
     if (adDomains.length === 0 || adDomains.some((d) => domain.includes(d))) {
@@ -230,7 +232,7 @@ async function scanPage(page, adDomains, hitDomains) {
     }
   }
 
-  return { ads, organics, totalAds: adElements.length };
+  return { ads, organics, totalAds: adElements.length, allAdDomains: [...allAdDomains] };
 }
 
 async function clickInNewTab(browser, page, element) {
@@ -324,13 +326,14 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "")
     await autoScroll(page);
     await randomSleep(1, 2);
 
-    const { ads, organics, totalAds } = await scanPage(page, adDomains, hitDomains);
+    const { ads, organics, totalAds, allAdDomains } = await scanPage(page, adDomains, hitDomains);
     totalAdsOnPage += totalAds;
 
     const searchAds = pg <= maxAdPages && adDomains.length > 0;
     const searchHits = pg <= maxHitPages && hitDomains.some((d) => !clickedHitDomains.has(d));
 
-    console.log(`${tag}[Sayfa ${pg}] Toplam reklam: ${totalAds} | Hedef reklam: ${searchAds ? ads.length : "atlandı"} | Organik hit: ${searchHits ? organics.length : "atlandı"}`);
+    const adDomainsList = allAdDomains.length > 0 ? ` [${allAdDomains.join(", ")}]` : "";
+    console.log(`${tag}[Sayfa ${pg}] Toplam reklam: ${totalAds}${adDomainsList} | Hedef reklam: ${searchAds ? ads.length : "atlandı"} | Organik hit: ${searchHits ? organics.length : "atlandı"}`);
 
     // Reklamlara tıkla (yeni sekmede) - sadece pg <= 3, her sayfada tüm hedef reklamlar tıklanır
     if (searchAds) {
@@ -339,7 +342,7 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "")
           const newTab = await clickInNewTab(browser, page, ad.element);
           if (newTab) {
             adClicked++;
-            stats.totalClicked++;
+            recordAd(ad.domain);
             clickCounter.record(ad.domain, "ads");
             console.log(`${tag}✓ Reklam tıklandı: ${ad.domain} → ${newTab.url()}`);
             await browseAdPage(newTab, tag);
@@ -372,7 +375,7 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "")
         if (newTab) {
           clickedHitDomains.add(hit.matchedHit);
           hitClicked++;
-          stats.totalHits++;
+          recordHit(hit.domain);
           clickCounter.record(hit.domain, "hits");
           console.log(`${tag}✓ Organik tıklandı: ${hit.domain} → ${newTab.url()}`);
           logRanking({ query, domain: hit.domain, page: pg, position: globalPosition, clicked: true });

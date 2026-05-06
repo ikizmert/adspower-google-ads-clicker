@@ -11,15 +11,27 @@ async function checkStatus() {
 async function openBrowser(profileId) {
   const headless = config.behavior.headless ? 1 : 0;
   const url = `${API}/api/v1/browser/start?user_id=${profileId}&open_tabs=0&ip_tab=0&headless=${headless}`;
-  const res = await fetch(url);
-  const data = await res.json();
-  if (data.code !== 0) {
-    throw new Error(`AdsPower açılamadı: ${data.msg}`);
+
+  // Rate limit retry (max 7 deneme, exponential backoff)
+  let lastError;
+  for (let attempt = 1; attempt <= 7; attempt++) {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.code === 0) {
+      return {
+        wsEndpoint: data.data.ws.puppeteer,
+        driverPath: data.data.webdriver,
+      };
+    }
+    lastError = data.msg;
+    if (data.msg && data.msg.toLowerCase().includes("too many")) {
+      const wait = 1000 * attempt; // 1s, 2s, 3s, 4s, 5s
+      await new Promise((r) => setTimeout(r, wait));
+      continue;
+    }
+    break; // Rate limit dışı hata, tekrar deneme
   }
-  return {
-    wsEndpoint: data.data.ws.puppeteer,
-    driverPath: data.data.webdriver,
-  };
+  throw new Error(`AdsPower açılamadı: ${lastError}`);
 }
 
 async function closeBrowser(profileId) {

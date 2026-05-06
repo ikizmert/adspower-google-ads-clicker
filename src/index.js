@@ -1,9 +1,7 @@
 const puppeteer = require("puppeteer-core");
 const { config, queries, parseQuery } = require("./config");
-const { checkStatus, openBrowser, closeBrowser, listProfiles, getProfileInfo, clearCache } = require("./adspower");
-const { searchAndClick, closeExtraTabs, enableImageBlocking, clearAllBrowserData, applyPilotCookies } = require("./searcher");
-const path = require("path");
-const PILOT_COOKIES_PATH = path.join(__dirname, "..", "pilot-cookies.json");
+const { checkStatus, openBrowser, closeBrowser, listProfiles, clearCache } = require("./adspower");
+const { searchAndClick, closeExtraTabs, enableImageBlocking } = require("./searcher");
 const tracker = require("./profile-tracker");
 const clickCounter = require("./click-counter");
 const { state: stats } = require("./stats");
@@ -11,9 +9,17 @@ const { state: stats } = require("./stats");
 function printSummary() {
   console.log(`\n=== Kampanya tamamlandı ===`);
   if (stats.stopReason) console.log(`  Durma sebebi: ${stats.stopReason}`);
-  console.log(`  Tamamlanan session: ${stats.completed}/${stats.maxRun}`);
+  console.log(`  Tamamlanan session: ${stats.completed}${stats.maxRun === Infinity ? "" : "/" + stats.maxRun}`);
   console.log(`  Toplam reklam tıklaması: ${stats.totalClicked}`);
+  const adDomains = Object.entries(stats.adsByDomain).sort((a, b) => b[1] - a[1]);
+  for (const [d, n] of adDomains) {
+    console.log(`    ${d}: ${n}`);
+  }
   console.log(`  Toplam organik tıklama: ${stats.totalHits}`);
+  const hitDomains = Object.entries(stats.hitsByDomain).sort((a, b) => b[1] - a[1]);
+  for (const [d, n] of hitDomains) {
+    console.log(`    ${d}: ${n}`);
+  }
   console.log(`  Toplam başarısız session: ${stats.totalFailed}`);
 }
 
@@ -63,19 +69,14 @@ async function resetIfNeeded(profiles) {
 }
 
 function pickProfiles(profiles, count) {
-  const ids = profiles.map((p) => p.id);
-
   // Hiç kullanılmamış profiller (sessions=0)
-  const unused = ids.filter((id) => {
-    const p = tracker.getProfile(id);
-    return !p.sessions;
-  });
+  const unused = profiles.filter((p) => !tracker.getProfile(p.id).sessions);
   // Kullanılmışlar - en uzun süre önce kullanılan başta
-  const used = ids
-    .filter((id) => tracker.getProfile(id).sessions)
+  const used = profiles
+    .filter((p) => tracker.getProfile(p.id).sessions)
     .sort((a, b) => {
-      const la = tracker.getProfile(a).last_used || 0;
-      const lb = tracker.getProfile(b).last_used || 0;
+      const la = tracker.getProfile(a.id).last_used || 0;
+      const lb = tracker.getProfile(b.id).last_used || 0;
       return la - lb;
     });
 
@@ -90,14 +91,13 @@ function pickProfiles(profiles, count) {
   return all.slice(0, Math.min(count, all.length));
 }
 
-async function runSession(profileId, parsedQueries, sessionLabel) {
-  const info = await getProfileInfo(profileId);
-  const profileLabel = info
-    ? `#${info.serial || "?"} ${info.name || profileId}`
-    : profileId;
-  const stats = tracker.getProfile(profileId);
+async function runSession(profile, parsedQueries) {
+  const profileId = profile.id;
+  const sessionLabel = `#${profile.serial || "?"}`;
+  const profileName = profile.name || profileId;
+  const profileStats = tracker.getProfile(profileId);
 
-  console.log(`[${sessionLabel}] ${profileLabel} (oturum: ${stats.sessions + 1}/5) başlıyor...`);
+  console.log(`[${sessionLabel}] ${profileName} (oturum: ${profileStats.sessions + 1}/5) başlıyor...`);
 
   let browser;
   try {
@@ -112,9 +112,8 @@ async function runSession(profileId, parsedQueries, sessionLabel) {
     await enableImageBlocking(browser);
   }
 
-  // Profili pilot ile aynı state'e getir: storage temizle → pilot cookie'leri yükle
-  await clearAllBrowserData(browser);
-  await applyPilotCookies(browser, PILOT_COOKIES_PATH);
+  // Profili pilot klonu state'inde bırak — temizleme yapma
+  // (cache/cookie temizleme Google'a "fresh user" sinyali veriyor → captcha)
 
   await closeExtraTabs(browser);
 
@@ -125,13 +124,17 @@ async function runSession(profileId, parsedQueries, sessionLabel) {
   const sessionRankings = [];
 
   for (const q of sessionQueries) {
-    const result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel);
+    try {
+      const result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel);
 
-    if (result.totalAdsOnPage > 0) sessionAdsFound += result.totalAdsOnPage;
-    // stats.totalClicked / stats.totalHits searcher.js'de tıklama anında artırılıyor
-    if (result.hits > 0) sessionHits += result.hits;
-    if (result.ads > 0) sessionClicked += result.ads;
-    if (result.rankings) sessionRankings.push({ query: q.search, rankings: result.rankings, notFound: result.notFound || [] });
+      if (result.totalAdsOnPage > 0) sessionAdsFound += result.totalAdsOnPage;
+      // stats.totalClicked / stats.totalHits searcher.js'de tıklama anında artırılıyor
+      if (result.hits > 0) sessionHits += result.hits;
+      if (result.ads > 0) sessionClicked += result.ads;
+      if (result.rankings) sessionRankings.push({ query: q.search, rankings: result.rankings, notFound: result.notFound || [] });
+    } catch (e) {
+      console.error(`[${sessionLabel}] Query hatası ("${q.search}"): ${e.message.split("\n")[0]} — atlanıyor`);
+    }
 
     const wait = (5 + Math.random() * 10) * config.behavior.wait_factor;
     console.log(`[${sessionLabel}] ${wait.toFixed(1)}s bekleniyor...\n`);
@@ -187,27 +190,39 @@ async function run() {
   }
 
   const allProfiles = await listProfiles();
-  const profiles = getUsableProfiles(allProfiles);
+  let profiles = getUsableProfiles(allProfiles);
   if (profiles.length === 0) {
     console.error("Kullanılabilir desktop profil yok!");
     process.exit(1);
   }
 
-  const browserCount = config.behavior.browser_count || 1;
-  const maxRun = config.behavior.max_run;
+  // CLI: node src/index.js 41 → sadece serial 41 olan profili çalıştır
+  const cliSerial = process.argv[2];
+  if (cliSerial) {
+    profiles = profiles.filter((p) => String(p.serial) === String(cliSerial));
+    if (profiles.length === 0) {
+      console.error(`Serial ${cliSerial} olan profil bulunamadı!`);
+      process.exit(1);
+    }
+    console.log(`Tek profil modu: #${cliSerial}`);
+  }
+
+  const browserCount = cliSerial ? 1 : (config.behavior.browser_count || 1);
+  const maxRun = cliSerial ? 1 : config.behavior.max_run;
   const maxTotalClicks = config.behavior.max_total_clicks || 0;
   const idleTimeoutMs = (config.behavior.idle_timeout_minutes || 0) * 60 * 1000;
   const parsedQueries = queries.map(parseQuery);
 
-  console.log(`Profil: ${profiles.length} | Paralel: ${browserCount} | Session: ${maxRun}` +
+  const unlimited = !maxRun || maxRun <= 0;
+  console.log(`Profil: ${profiles.length} | Paralel: ${browserCount} | Session: ${unlimited ? "sınırsız" : maxRun}` +
     (maxTotalClicks ? ` | Max tıklama: ${maxTotalClicks}` : "") +
     (idleTimeoutMs ? ` | Idle timeout: ${config.behavior.idle_timeout_minutes}dk` : ""));
   console.log(`Query: ${parsedQueries.length} | Bekleme: ${config.behavior.ad_page_min_wait}-${config.behavior.ad_page_max_wait}s\n`);
 
-  stats.maxRun = maxRun;
+  stats.maxRun = unlimited ? Infinity : maxRun;
   let lastClickTime = Date.now();
 
-  while (stats.completed < maxRun) {
+  while (unlimited || stats.completed < maxRun) {
     if (maxTotalClicks > 0 && stats.totalClicked >= maxTotalClicks) {
       stats.stopReason = `Max tıklama (${maxTotalClicks}) ulaşıldı`;
       break;
@@ -219,19 +234,27 @@ async function run() {
 
     await resetIfNeeded(profiles);
 
-    const batchSize = Math.min(browserCount, maxRun - stats.completed, profiles.length);
-    const selectedIds = pickProfiles(profiles, batchSize);
+    const remaining = unlimited ? Infinity : (maxRun - stats.completed);
+    const batchSize = Math.min(browserCount, remaining, profiles.length);
+    const selectedProfiles = pickProfiles(profiles, batchSize);
 
-    console.log(`\n=== Batch ${Math.floor(stats.completed / batchSize) + 1} (${selectedIds.length} paralel) ===`);
+    const profileLabels = selectedProfiles.map((p) => `#${p.serial || p.id}`).join(", ");
+    console.log(`\n=== Batch (${selectedProfiles.length} paralel: ${profileLabels}) ===`);
 
-    const promises = selectedIds.map(async (id, i) => {
-      await sleep(i * 1500);
-      return runSession(id, parsedQueries, `B${stats.completed + i + 1}`);
+    const promises = selectedProfiles.map(async (profile, i) => {
+      await sleep(i * 3000);
+      try {
+        return await runSession(profile, parsedQueries);
+      } catch (e) {
+        console.error(`Session hatası (#${profile.serial || profile.id}): ${e.message.split("\n")[0]} — atlanıyor`);
+        return { clicked: 0, hits: 0, adsFound: 0 };
+      }
     });
-    const results = await Promise.all(promises);
+    const results = await Promise.allSettled(promises);
 
     // stats.completed/totalClicked/totalHits/totalFailed runSession içinde güncellenmiş durumda
-    for (const r of results) {
+    for (const settled of results) {
+      const r = settled.status === "fulfilled" ? settled.value : { clicked: 0, hits: 0 };
       if (r.clicked > 0 || (r.hits || 0) > 0) lastClickTime = Date.now();
     }
 

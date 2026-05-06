@@ -7,6 +7,18 @@ const state = {
   completed: 0,
   maxRun: 0,
   stopReason: null,
+  adsByDomain: {},
+  hitsByDomain: {},
 };
 
-module.exports = { state };
+function recordAd(domain) {
+  state.totalClicked++;
+  state.adsByDomain[domain] = (state.adsByDomain[domain] || 0) + 1;
+}
+
+function recordHit(domain) {
+  state.totalHits++;
+  state.hitsByDomain[domain] = (state.hitsByDomain[domain] || 0) + 1;
+}
+
+module.exports = { state, recordAd, recordHit };

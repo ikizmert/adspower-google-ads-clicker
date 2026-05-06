@@ -5,7 +5,8 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "profiles": "node src/list-profiles.js"
+    "profiles": "node src/list-profiles.js",
+    "export-pilot": "node src/export-pilot-cookies.js"
   },
   "keywords": [],
   "author": "",

@@ -9,7 +9,8 @@ async function checkStatus() {
 }
 
 async function openBrowser(profileId) {
-  const url = `${API}/api/v1/browser/start?user_id=${profileId}&open_tabs=0&ip_tab=0`;
+  const headless = config.behavior.headless ? 1 : 0;
+  const url = `${API}/api/v1/browser/start?user_id=${profileId}&open_tabs=0&ip_tab=0&headless=${headless}`;
   const res = await fetch(url);
   const data = await res.json();
   if (data.code !== 0) {
@@ -55,6 +56,7 @@ async function getProfileInfo(profileId) {
   return {
     id: p.user_id,
     name: p.name,
+    serial: p.serial_number,
     groupName: p.group_name,
     isMobile,
   };

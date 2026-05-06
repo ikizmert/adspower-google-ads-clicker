@@ -1,2 +1,10 @@
 node_modules/
 .DS_Store
+
+# Hassas: pilot profil cookie'leri (Google session token'ları içerir)
+pilot-cookies.json
+
+# Runtime state (her runda değişir, paylaşılmaz)
+profiles.json
+clicks.json
+rankings.json

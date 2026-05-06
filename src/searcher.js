@@ -1,4 +1,7 @@
 const { config } = require("./config");
+const { logRanking, logNotFound } = require("./ranking-logger");
+const clickCounter = require("./click-counter");
+const { state: stats } = require("./stats");
 
 const GOOGLE_URL = "https://www.google.com";
 
@@ -22,8 +25,68 @@ async function closeExtraTabs(browser) {
   }
 }
 
-async function doSearch(page, query) {
-  // Yöntem 1: Google'a git, input'a yaz, Enter bas
+async function applyPilotCookies(browser, cookiesPath) {
+  const fs = require("fs");
+  if (!fs.existsSync(cookiesPath)) {
+    console.log(`  ⚠ Pilot cookies dosyası bulunamadı: ${cookiesPath}`);
+    return;
+  }
+  const cookies = JSON.parse(fs.readFileSync(cookiesPath, "utf-8"));
+  if (!cookies.length) return;
+
+  const pages = await browser.pages();
+  if (pages.length === 0) return;
+  const session = await pages[0].target().createCDPSession();
+  try {
+    await session.send("Network.setCookies", { cookies });
+    console.log(`  ✓ ${cookies.length} pilot cookie uygulandı`);
+  } catch (e) {
+    console.log(`  ✗ Cookie uygulama hatası: ${e.message.split("\n")[0]}`);
+  }
+  await session.detach().catch(() => {});
+}
+
+async function clearAllBrowserData(browser) {
+  // CDP ile tüm storage'ı temizle (cookies + localStorage + IndexedDB + cache + service workers + history)
+  const pages = await browser.pages();
+  if (pages.length === 0) return;
+  const session = await pages[0].target().createCDPSession();
+  try {
+    await session.send("Network.clearBrowserCookies").catch(() => {});
+    await session.send("Network.clearBrowserCache").catch(() => {});
+    await session.send("Storage.clearDataForOrigin", {
+      origin: "*",
+      storageTypes: "all",
+    }).catch(() => {});
+  } catch {}
+  await session.detach().catch(() => {});
+}
+
+async function setupImageBlocking(page) {
+  await page.setRequestInterception(true).catch(() => {});
+  page.on("request", (req) => {
+    const type = req.resourceType();
+    if (type === "image" || type === "media" || type === "font") {
+      req.abort().catch(() => {});
+    } else {
+      req.continue().catch(() => {});
+    }
+  });
+}
+
+async function enableImageBlocking(browser) {
+  // Mevcut page'lere uygula
+  for (const p of await browser.pages()) {
+    await setupImageBlocking(p);
+  }
+  // Yeni açılan page'lere de uygula
+  browser.on("targetcreated", async (target) => {
+    const p = await target.page().catch(() => null);
+    if (p) await setupImageBlocking(p);
+  });
+}
+
+async function doSearch(page, query, tag = "") {
   try {
     await page.goto(GOOGLE_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
     await randomSleep(1, 2);
@@ -44,12 +107,11 @@ async function doSearch(page, query) {
       if (page.url().includes("/search")) return true;
     }
   } catch (e) {
-    console.log(`  [!] Yazarak arama başarısız: ${e.message.split("\n")[0]}`);
+    console.log(`${tag}[!] Yazarak arama başarısız: ${e.message.split("\n")[0]}`);
   }
 
-  // Yöntem 2: Doğrudan URL ile arama
   try {
-    console.log(`  [!] URL ile arama deneniyor...`);
+    console.log(`${tag}[!] URL ile arama deneniyor...`);
     await page.goto(
       `${GOOGLE_URL}/search?q=${encodeURIComponent(query)}`,
       { waitUntil: "domcontentloaded", timeout: 30000 }
@@ -57,68 +119,295 @@ async function doSearch(page, query) {
     await randomSleep(1, 2);
     return page.url().includes("/search");
   } catch (e) {
-    console.log(`  ✗ Arama tamamen başarısız: ${e.message.split("\n")[0]}`);
+    console.log(`${tag}✗ Arama tamamen başarısız: ${e.message.split("\n")[0]}`);
     return false;
   }
 }
 
-async function searchAndClick(browser, query, targetDomains) {
+async function scanPage(page, adDomains, hitDomains) {
+  const ads = [];
+  const organics = [];
+
+  // Reklamları bul (hit domainlerini hariç tut)
+  const adElements = await page.$$("a[data-pcu]");
+  for (const el of adElements) {
+    const pcu = await el.evaluate((e) => e.getAttribute("data-pcu") || "");
+    const domain = extractDomain(pcu);
+    const isHitDomain = hitDomains.some((d) => domain.includes(d));
+    if (isHitDomain) continue;
+    if (adDomains.length === 0 || adDomains.some((d) => domain.includes(d))) {
+      ads.push({ element: el, domain, pcu });
+    }
+  }
+
+  // Organik sonuçları bul - sadece gerçek organik, reklam/maps hariç
+  const seenHrefs = new Set();
+  const organicData = await page.evaluate(() => {
+    const AD_URL_PARAMS = ["gclid", "gad_source", "gad_campaignid", "gbraid", "wbraid", "msclkid"];
+    const AD_URL_PATTERNS = ["/aclk?", "/url?sa=t&source=web&rct=j&url=", "googleadservices.com"];
+
+    const isAdUrl = (href) => {
+      if (AD_URL_PATTERNS.some((p) => href.includes(p))) return true;
+      try {
+        const u = new URL(href);
+        for (const param of AD_URL_PARAMS) {
+          if (u.searchParams.has(param)) return true;
+        }
+      } catch {}
+      return false;
+    };
+
+    const isInAdContainer = (el) => {
+      let p = el;
+      while (p) {
+        if (!p.tagName) { p = p.parentElement; continue; }
+        if (p.id === "tads" || p.id === "bottomads" || p.id === "tadsb") return true;
+        if (p.hasAttribute && (p.hasAttribute("data-text-ad") || p.hasAttribute("data-pcu") || p.hasAttribute("data-rw"))) return true;
+        const aria = p.getAttribute && p.getAttribute("aria-label");
+        if (aria && (aria.toLowerCase().includes("sponsor") || aria.toLowerCase().includes("reklam"))) return true;
+        if (p.classList && (p.classList.contains("commercial-unit-desktop-rhs") || p.classList.contains("ads-ad") || p.classList.contains("Sg4azc"))) return true;
+        p = p.parentElement;
+      }
+      return false;
+    };
+
+    // Container içinde "Sponsored" / "Sponsorlu" etiketi var mı (Google yasal olarak göstermek zorunda)
+    const hasSponsoredLabel = (container) => {
+      // Container'ın tüm spans'lerine bak — tek başına "Sponsorlu" / "Sponsored" yazan element
+      const small = container.querySelectorAll('span, div');
+      for (const s of small) {
+        const t = (s.textContent || "").trim();
+        // Sadece "Sponsorlu", "Sponsored" tek kelime varsa
+        if (t === "Sponsorlu" || t === "Sponsored" || t === "Reklam") return true;
+      }
+      // Container içinde a[data-pcu] var mı (reklam linki)
+      if (container.querySelector('a[data-pcu], [data-text-ad]')) return true;
+      return false;
+    };
+
+    const containers = document.querySelectorAll('#rso > div, #rso > div.MjjYud, #rso div.g, #rso div[data-snc]');
+    const seen = new Set();
+    const results = [];
+    let pos = 0;
+    for (const c of containers) {
+      if (isInAdContainer(c)) continue;
+      if (hasSponsoredLabel(c)) continue;
+      const a = c.querySelector('a[href]:not([data-pcu]):not([href^="javascript"])');
+      if (!a) continue;
+      const href = a.href;
+      if (!href) continue;
+      if (href.includes("google.com/maps") || href.includes("maps.google") || href.includes("google.com/local")) continue;
+      if (href.includes("google.com")) continue;
+      if (isAdUrl(href)) continue; // Tracking parametreli linkler reklamdır
+      if (seen.has(href)) continue;
+      seen.add(href);
+      pos++;
+      const u = new URL(href);
+      const domain = u.hostname.replace("www.", "").toLowerCase();
+      results.push({ href, domain, position: pos });
+    }
+    return results;
+  });
+
+  // Eşleşen organik sonuçları topla, element referanslarını al
+  for (const item of organicData) {
+    const matchedHit = hitDomains.find((d) => item.domain.includes(d));
+    if (!matchedHit) continue;
+    if (seenHrefs.has(item.href)) continue;
+    seenHrefs.add(item.href);
+
+    // Element handle al
+    const handle = await page.evaluateHandle((href) => {
+      const links = document.querySelectorAll('#rso a[href]');
+      for (const a of links) {
+        if (a.href === href) return a;
+      }
+      return null;
+    }, item.href);
+    const el = handle.asElement();
+    if (el) {
+      organics.push({ element: el, domain: item.domain, matchedHit, href: item.href, position: item.position });
+    }
+  }
+
+  return { ads, organics, totalAds: adElements.length };
+}
+
+async function clickInNewTab(browser, page, element) {
+  const pagesBefore = (await browser.pages()).length;
+
+  await element.scrollIntoView();
+  await randomSleep(0.4, 0.8);
+  const box = await element.boundingBox();
+  if (!box) return null;
+
+  const x = box.x + box.width / 2 + (Math.random() * 6 - 3);
+  const y = box.y + box.height / 2 + (Math.random() * 4 - 2);
+
+  // Mouse'u hedefe doğal hareketle götür
+  await humanMouseMove(page, x, y);
+  await randomSleep(0.2, 0.5);
+
+  // Yöntem 1: Cmd/Ctrl + Click (en doğal yöntem)
+  const modifier = process.platform === "darwin" ? "Meta" : "Control";
+  await page.keyboard.down(modifier);
+  await randomSleep(0.05, 0.15);
+  await page.mouse.down({ button: "left" });
+  await sleep(50 + Math.random() * 100);
+  await page.mouse.up({ button: "left" });
+  await randomSleep(0.05, 0.15);
+  await page.keyboard.up(modifier);
+
+  await sleep(2500);
+  let allPages = await browser.pages();
+  if (allPages.length > pagesBefore) {
+    const newTab = allPages[allPages.length - 1];
+    await newTab.bringToFront();
+    await newTab.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+    return newTab;
+  }
+
+  // Yöntem 2: Middle click
+  await humanMouseMove(page, x, y);
+  await randomSleep(0.2, 0.4);
+  await page.mouse.click(x, y, { button: "middle" });
+
+  await sleep(2000);
+  allPages = await browser.pages();
+  if (allPages.length > pagesBefore) {
+    const newTab = allPages[allPages.length - 1];
+    await newTab.bringToFront();
+    await newTab.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+    return newTab;
+  }
+
+  // Yöntem 3: JS ile yeni tab
+  const href = await element.evaluate((el) => el.href || el.closest("a")?.href || "");
+  if (href && !href.startsWith("javascript")) {
+    const newTab = await browser.newPage();
+    await newTab.goto(href, { waitUntil: "domcontentloaded", timeout: 15000 });
+    return newTab;
+  }
+
+  return null;
+}
+
+async function searchAndClick(browser, query, adDomains, hitDomains, label = "") {
   const page = (await browser.pages())[0] || (await browser.newPage());
+  const tag = label ? `[${label}] ` : "  ";
 
-  console.log(`  Aranıyor: "${query}"`);
+  console.log(`${tag}Aranıyor: "${query}"`);
 
-  // Google'a git ve arama yap
-  const searched = await doSearch(page, query);
+  const searched = await doSearch(page, query, tag);
   if (!searched) {
-    return { ads: 0, totalAdsOnPage: 0, error: "search_failed" };
+    return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "search_failed" };
   }
   await randomSleep(1, 2);
 
-  // Captcha / "having trouble" kontrolü
   const content = await page.content();
   if (content.includes("having trouble") || content.includes("unusual traffic")) {
     console.log("  ⚠ Google bot algıladı — session atlanıyor");
-    return { ads: 0, totalAdsOnPage: 0, error: "bot_detected" };
+    return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
   }
 
   let totalAdsOnPage = 0;
-
-  // Reklamları bul, bulamazsa 2. ve 3. sayfaya bak
-  let matchingAds = [];
-  const maxPages = 3;
+  let adClicked = 0;
+  let hitClicked = 0;
+  const clickedHitDomains = new Set();
+  const loggedHitDomains = new Set();
+  const rankings = [];
+  const maxAdPages = 3;
+  const maxHitPages = 5;
+  const maxPages = Math.max(maxAdPages, maxHitPages);
 
   for (let pg = 1; pg <= maxPages; pg++) {
     await autoScroll(page);
     await randomSleep(1, 2);
 
-    // Desktop: a[data-pcu], Mobil: a[data-rw], a[data-ved] içinde sponsorlu olanlar
-    const adElements = await page.$$("a[data-pcu]");
-    const mobileAdElements = adElements.length === 0
-      ? await page.$$('#tads a[data-ved], #bottomads a[data-ved], [data-text-ad] a, a[data-rw]')
-      : [];
-    const allAds = [...adElements, ...mobileAdElements];
-    totalAdsOnPage += allAds.length;
-    console.log(`  [Sayfa ${pg}] Bulunan reklam: ${allAds.length}`);
+    const { ads, organics, totalAds } = await scanPage(page, adDomains, hitDomains);
+    totalAdsOnPage += totalAds;
 
-    for (const ad of allAds) {
-      const pcu = await ad.evaluate((el) => el.getAttribute("data-pcu") || el.getAttribute("data-rw") || el.href || "");
-      const domain = extractDomain(pcu);
-      if (targetDomains.length === 0 || targetDomains.some((d) => domain.includes(d))) {
-        matchingAds.push({ element: ad, pcu, domain });
+    const searchAds = pg <= maxAdPages && adDomains.length > 0;
+    const searchHits = pg <= maxHitPages && hitDomains.some((d) => !clickedHitDomains.has(d));
+
+    console.log(`${tag}[Sayfa ${pg}] Toplam reklam: ${totalAds} | Hedef reklam: ${searchAds ? ads.length : "atlandı"} | Organik hit: ${searchHits ? organics.length : "atlandı"}`);
+
+    // Reklamlara tıkla (yeni sekmede) - sadece pg <= 3, her sayfada tüm hedef reklamlar tıklanır
+    if (searchAds) {
+      for (const ad of ads) {
+        try {
+          const newTab = await clickInNewTab(browser, page, ad.element);
+          if (newTab) {
+            adClicked++;
+            stats.totalClicked++;
+            clickCounter.record(ad.domain, "ads");
+            console.log(`${tag}✓ Reklam tıklandı: ${ad.domain} → ${newTab.url()}`);
+            await browseAdPage(newTab, tag);
+            await newTab.close();
+            await page.bringToFront();
+            await randomSleep(1, 2);
+          } else {
+            console.log(`${tag}✗ Reklam yeni sekmede açılamadı: ${ad.domain}`);
+          }
+        } catch (e) {
+          console.log(`${tag}✗ Reklam tıklama hatası: ${e.message.split("\n")[0]}`);
+        }
       }
     }
 
-    if (matchingAds.length > 0) break;
+    // Bulunan tüm organik hit domain'lere tıkla (her domain için bir kez) - sadece pg <= 5
+    if (searchHits) {
+    for (const hit of organics) {
+      if (clickedHitDomains.has(hit.matchedHit)) continue;
+      const globalPosition = (pg - 1) * 10 + hit.position;
+
+      if (!loggedHitDomains.has(hit.matchedHit)) {
+        loggedHitDomains.add(hit.matchedHit);
+        rankings.push({ domain: hit.domain, page: pg, position: hit.position, globalPosition });
+        console.log(`${tag}🎯 Organik: ${hit.domain} — Sayfa ${pg}, Sıra ${hit.position} (genel: ${globalPosition})`);
+      }
+
+      try {
+        const newTab = await clickInNewTab(browser, page, hit.element);
+        if (newTab) {
+          clickedHitDomains.add(hit.matchedHit);
+          hitClicked++;
+          stats.totalHits++;
+          clickCounter.record(hit.domain, "hits");
+          console.log(`${tag}✓ Organik tıklandı: ${hit.domain} → ${newTab.url()}`);
+          logRanking({ query, domain: hit.domain, page: pg, position: globalPosition, clicked: true });
+          await browseAdPage(newTab, tag);
+          // Organik sekmesi session sonuna kadar açık kalır
+          await page.bringToFront();
+          await randomSleep(1, 2);
+        } else {
+          console.log(`${tag}✗ Yeni sekmede açılamadı: ${hit.domain}`);
+          logRanking({ query, domain: hit.domain, page: pg, position: globalPosition, clicked: false });
+          clickedHitDomains.add(hit.matchedHit);
+        }
+      } catch (e) {
+        console.log(`${tag}✗ Tıklama hatası: ${e.message.split("\n")[0]}`);
+        logRanking({ query, domain: hit.domain, page: pg, position: globalPosition, clicked: false });
+        clickedHitDomains.add(hit.matchedHit);
+      }
+    }
+    } // searchHits
+
+    // Çıkış kontrolü:
+    // - Reklam: pg >= 3 olunca aramayı bırak (her sayfada gördüğünü tıklar, sınır yok)
+    // - Hit: tüm hit domainler tıklandı veya pg >= 5
+    const adSearchDone = adDomains.length === 0 || pg >= maxAdPages;
+    const allHitsDone = hitDomains.length === 0 || hitDomains.every((d) => clickedHitDomains.has(d));
+    if (adSearchDone && allHitsDone) break;
 
     // Sonraki sayfaya git
     if (pg < maxPages) {
-      const nextBtn = await page.$('a#pnnext, a[aria-label="Next"], a[aria-label="Sonraki"], td.d6cvqb a[id="pnnext"], a.nBDE1b.G5eFlf, footer a[aria-label="Page 2"]');
+      const nextBtn = await page.$('a#pnnext, a[aria-label="Next"], a[aria-label="Sonraki"], td.d6cvqb a[id="pnnext"]');
       if (!nextBtn) {
-        console.log(`  Sonraki sayfa butonu bulunamadı`);
+        console.log(`${tag}Sonraki sayfa butonu bulunamadı`);
         break;
       }
-      console.log(`  Hedef reklam yok, sayfa ${pg + 1}'e geçiliyor...`);
-      await humanMouseMove(page, 0, 0);
+      console.log(`${tag}Sayfa ${pg + 1}'e geçiliyor...`);
       const nbox = await nextBtn.boundingBox();
       if (nbox) {
         await humanMouseMove(page, nbox.x + nbox.width / 2, nbox.y + nbox.height / 2);
@@ -132,93 +421,16 @@ async function searchAndClick(browser, query, targetDomains) {
     }
   }
 
-  if (matchingAds.length === 0) {
-    console.log(`  Hedef reklam bulunamadı (${maxPages} sayfa kontrol edildi)`);
-    return { ads: 0, totalAdsOnPage, error: null };
-  }
-
-  console.log(
-    `  Hedef reklamlar: ${matchingAds.length} (${matchingAds.map((a) => a.domain).join(", ")})`
-  );
-
-  let clicked = 0;
-  const maxClicks = config.behavior.max_clicks_per_domain;
-
-  for (let i = 0; i < matchingAds.length; i++) {
-    if (maxClicks > 0 && clicked >= maxClicks) break;
-
-    const ad = matchingAds[i];
-    try {
-      // Element'e scroll yap ve tıkla
-      const box = await ad.element.boundingBox();
-      if (!box) {
-        console.log(`  ✗ Reklam görünür değil: ${ad.domain}`);
-        continue;
-      }
-      await ad.element.scrollIntoView();
-      await randomSleep(0.3, 0.6);
-      const freshBox = await ad.element.boundingBox();
-      if (!freshBox) {
-        console.log(`  ✗ Scroll sonrası reklam kayboldu: ${ad.domain}`);
-        continue;
-      }
-      const x = freshBox.x + freshBox.width / 2 + (Math.random() * 6 - 3);
-      const y = freshBox.y + freshBox.height / 2 + (Math.random() * 4 - 2);
-      await humanMouseMove(page, x, y);
-      await randomSleep(0.1, 0.3);
-      const urlBefore = page.url();
-      await page.mouse.click(x, y);
-
-      // Sayfanın değişmesini bekle
-      try {
-        await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 });
-      } catch {
-        // Navigation event olmadıysa URL değişmiş mi kontrol et
-        await sleep(2000);
-      }
-
-      const urlAfter = page.url();
-      if (urlAfter === urlBefore || urlAfter.includes("/search")) {
-        console.log(`  ✗ Sayfa değişmedi, tıklama başarısız: ${ad.domain}`);
-        continue;
-      }
-
-      clicked++;
-      console.log(`  ✓ Tıklandı: ${ad.domain} → ${urlAfter}`);
-
-      // Reklam sitesinde insan gibi gezin
-      await browseAdPage(page);
-
-      // Google'a geri dön
-      await page.goBack({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
-      await randomSleep(2, 3);
-
-      // Sonraki tıklama için reklamları tekrar bul (element referansları kaybolmuş olabilir)
-      if (i < matchingAds.length - 1) {
-        const freshAds = await page.$$("a[data-pcu]");
-        for (let j = i + 1; j < matchingAds.length; j++) {
-          const targetPcu = matchingAds[j].pcu;
-          for (const fa of freshAds) {
-            const pcu = await fa.evaluate((el) => el.getAttribute("data-pcu") || "");
-            if (pcu === targetPcu) {
-              matchingAds[j].element = fa;
-              break;
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.log(`  ✗ Tıklama hatası: ${e.message.split("\n")[0]}`);
+  // Hiç bulunamayan hit domainleri logla
+  for (const d of hitDomains) {
+    if (!loggedHitDomains.has(d)) {
+      logNotFound({ query, domain: d, pagesSearched: maxPages });
+      console.log(`${tag}✗ Bulunamadı: ${d} (${maxPages} sayfa)`);
     }
   }
 
-  // Shopping ads
-  if (config.behavior.check_shopping_ads) {
-    const shopClicked = await clickShoppingAds(page, targetDomains);
-    clicked += shopClicked;
-  }
-
-  return { ads: clicked, totalAdsOnPage, error: null };
+  const notFound = hitDomains.filter((d) => !loggedHitDomains.has(d));
+  return { ads: adClicked, hits: hitClicked, totalAdsOnPage, rankings, notFound, error: null };
 }
 
 async function humanMouseMove(page, targetX, targetY) {
@@ -237,7 +449,7 @@ async function humanMouseMove(page, targetX, targetY) {
   await page.mouse.move(targetX, targetY);
 }
 
-async function browseAdPage(page) {
+async function browseAdPage(page, tag = "") {
   const minWait = config.behavior.ad_page_min_wait;
   const maxWait = config.behavior.ad_page_max_wait;
   const totalTime = (minWait + Math.random() * (maxWait - minWait)) * 1000;
@@ -246,27 +458,23 @@ async function browseAdPage(page) {
   await sleep(1500 + Math.random() * 1000);
 
   while (Date.now() - startTime < totalTime) {
-    // Değişken scroll miktarı
     const scrollAmount = 50 + Math.floor(Math.random() * 250);
     await page.evaluate((amount) => {
       window.scrollBy({ top: amount, behavior: "smooth" });
     }, scrollAmount);
 
-    // Bazen daha uzun dur (okuma simülasyonu)
     if (Math.random() < 0.3) {
       await sleep(2000 + Math.random() * 3000);
     } else {
       await sleep(800 + Math.random() * 1500);
     }
 
-    // Bazen mouse'u rastgele hareket ettir
     if (Math.random() < 0.25) {
       const vw = await page.evaluate(() => window.innerWidth);
       const vh = await page.evaluate(() => window.innerHeight);
       await humanMouseMove(page, Math.random() * vw * 0.8 + vw * 0.1, Math.random() * vh * 0.6 + vh * 0.2);
     }
 
-    // Bazen yukarı scroll
     if (Math.random() < 0.1) {
       const upAmount = 30 + Math.floor(Math.random() * 100);
       await page.evaluate((amount) => {
@@ -276,49 +484,21 @@ async function browseAdPage(page) {
     }
   }
 
-  console.log(`  📄 Sitede ${(totalTime / 1000).toFixed(0)}s gezildi`);
-}
-
-async function clickShoppingAds(page, targetDomains) {
-  const shopLinks = await page.$$("a.pla-unit, a[data-dtld], .commercial-unit-desktop-rhs a");
-  let clicked = 0;
-
-  for (const link of shopLinks) {
-    const href = await link.evaluate((el) => el.href || "");
-    const domain = extractDomain(href);
-    if (targetDomains.length === 0 || targetDomains.some((d) => domain.includes(d))) {
-      try {
-        const box = await link.boundingBox();
-        if (!box) continue;
-        await link.scrollIntoView();
-        await randomSleep(0.3, 0.5);
-        const x = box.x + box.width / 2 + (Math.random() * 6 - 3);
-        const y = box.y + box.height / 2 + (Math.random() * 4 - 2);
-        await page.mouse.click(x, y);
-        clicked++;
-        console.log(`  ✓ Shopping tıklandı: ${domain}`);
-        await randomSleep(
-          config.behavior.ad_page_min_wait,
-          config.behavior.ad_page_max_wait
-        );
-        await page.goBack({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
-        await randomSleep(1, 2);
-      } catch {
-        break;
-      }
-    }
-  }
-  return clicked;
+  console.log(`${tag}📄 Sitede ${(totalTime / 1000).toFixed(0)}s gezildi`);
 }
 
 async function autoScroll(page) {
-  const scrollHeight = await page.evaluate(() => document.body.scrollHeight);
+  const scrollHeight = await page.evaluate(() => {
+    return document.body ? document.body.scrollHeight : 0;
+  }).catch(() => 0);
+  if (!scrollHeight) return;
+
   let scrolled = 0;
   while (scrolled < scrollHeight) {
     const step = 150 + Math.floor(Math.random() * 250);
     await page.evaluate((amount) => {
-      window.scrollBy({ top: amount, behavior: "smooth" });
-    }, step);
+      if (typeof window !== "undefined") window.scrollBy({ top: amount, behavior: "smooth" });
+    }, step).catch(() => {});
     scrolled += step;
     if (Math.random() < 0.2) {
       await sleep(800 + Math.random() * 1200);
@@ -336,4 +516,4 @@ function extractDomain(url) {
   }
 }
 
-module.exports = { searchAndClick, closeExtraTabs };
+module.exports = { searchAndClick, closeExtraTabs, enableImageBlocking, clearAllBrowserData, applyPilotCookies };

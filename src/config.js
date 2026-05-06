@@ -12,13 +12,27 @@ const queries = fs
   .filter(Boolean);
 
 function parseQuery(line) {
-  const [searchPart, domainPart] = line.includes("@")
-    ? [line.split("@")[0].trim(), line.split("@")[1].trim()]
-    : [line.trim(), ""];
-  const domains = domainPart
-    ? domainPart.split("#").map((d) => d.trim().toLowerCase())
-    : [];
-  return { search: searchPart, domains };
+  let rest = line.trim();
+  let adDomains = [];
+  let hitDomains = [];
+
+  // ! ile ayrılmış hit domainlerini topla
+  const parts = rest.split("!");
+  rest = parts[0].trim();
+  for (let i = 1; i < parts.length; i++) {
+    const d = parts[i].trim().toLowerCase();
+    if (d) hitDomains.push(d);
+  }
+
+  // @ ile ayrılmış reklam domainlerini topla
+  const adIndex = rest.indexOf("@");
+  if (adIndex !== -1) {
+    const adPart = rest.substring(adIndex + 1).trim();
+    rest = rest.substring(0, adIndex).trim();
+    adDomains = adPart.split("#").map((d) => d.trim().toLowerCase()).filter(Boolean);
+  }
+
+  return { search: rest, adDomains, hitDomains };
 }
 
 module.exports = { config, queries, parseQuery };

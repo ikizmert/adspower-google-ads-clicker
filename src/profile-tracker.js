@@ -27,6 +27,7 @@ function recordSession(profileId, totalAdsFound) {
     data[profileId] = { sessions: 0, no_ads_streak: 0 };
   }
   data[profileId].sessions++;
+  data[profileId].last_used = Date.now();
   if (totalAdsFound === 0) {
     data[profileId].no_ads_streak++;
   } else {
@@ -52,11 +53,12 @@ function removeProfile(profileId) {
 function pickBestProfile(profileIds) {
   const data = load();
   let best = null;
-  let minSessions = Infinity;
+  let oldestUsed = Infinity;
   for (const id of profileIds) {
-    const sessions = (data[id] && data[id].sessions) || 0;
-    if (sessions < minSessions) {
-      minSessions = sessions;
+    // Hiç kullanılmamış profili tercih et (last_used = 0)
+    const lastUsed = (data[id] && data[id].last_used) || 0;
+    if (lastUsed < oldestUsed) {
+      oldestUsed = lastUsed;
       best = id;
     }
   }

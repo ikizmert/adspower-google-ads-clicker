@@ -245,29 +245,24 @@ async function run() {
   let lastClickTime = Date.now();
   const SESSION_TIMEOUT = 8 * 60 * 1000;
 
-  // Continuous queue: daima browser_count aktif slot, biri biter biter biter yenisi başlar
+  // Continuous queue: ana loop sequential, sessionlar paralel
   const active = new Map(); // promise -> profileId
-  let starting = 0; // henüz başlatılmakta olan session sayısı
-  let stop = false;
 
-  function startedCount() { return active.size + starting; }
+  function shouldStop() {
+    if (maxTotalClicks > 0 && stats.totalClicked >= maxTotalClicks) {
+      stats.stopReason = `Max tıklama (${maxTotalClicks}) ulaşıldı`;
+      return true;
+    }
+    if (idleTimeoutMs > 0 && Date.now() - lastClickTime > idleTimeoutMs) {
+      stats.stopReason = `${config.behavior.idle_timeout_minutes}dk boyunca tıklama yok`;
+      return true;
+    }
+    if (!unlimited && stats.completed >= maxRun) return true;
+    return false;
+  }
 
-  async function startOne() {
-    const remaining = unlimited ? Infinity : (maxRun - stats.completed - startedCount());
-    if (remaining <= 0) return false;
-
-    await resetIfNeeded(profiles);
-    const [profile] = pickProfiles(profiles, 1);
-    if (!profile) return false;
-
-    starting++;
-    // Stagger: her yeni başlatma arası 5-10s
-    const staggerMs = 5000 + Math.random() * 5000;
-    await sleep(staggerMs);
-    starting--;
-
-    console.log(`▶ Session başlıyor: #${profile.serial || profile.id}`);
-
+  function launchSession(profile) {
+    console.log(`▶ Session başlıyor: #${profile.serial || profile.id} | aktif: ${active.size + 1}`);
     const sessionPromise = (async () => {
       try {
         return await Promise.race([
@@ -280,45 +275,39 @@ async function run() {
         return { clicked: 0, hits: 0, adsFound: 0 };
       }
     })();
-
     active.set(sessionPromise, profile.id);
     sessionPromise.then((r) => {
       if (r && (r.clicked > 0 || (r.hits || 0) > 0)) lastClickTime = Date.now();
-      console.log(`◀ Session bitti: #${profile.serial || profile.id} | aktif: ${active.size - 1}`);
       active.delete(sessionPromise);
+      console.log(`◀ Session bitti: #${profile.serial || profile.id} | aktif: ${active.size}`);
     });
-
-    return true;
   }
 
-  while (!stop) {
-    if (maxTotalClicks > 0 && stats.totalClicked >= maxTotalClicks) {
-      stats.stopReason = `Max tıklama (${maxTotalClicks}) ulaşıldı`;
-      break;
-    }
-    if (idleTimeoutMs > 0 && Date.now() - lastClickTime > idleTimeoutMs) {
-      stats.stopReason = `${config.behavior.idle_timeout_minutes}dk boyunca tıklama yok`;
-      break;
-    }
-    if (!unlimited && stats.completed >= maxRun) break;
+  // İlk batch: browser_count kadar session başlat (stagger ile)
+  for (let i = 0; i < browserCount; i++) {
+    if (shouldStop()) break;
+    if (i > 0) await sleep(3000 + Math.random() * 3000); // 3-6s stagger
+    await resetIfNeeded(profiles);
+    const [profile] = pickProfiles(profiles, 1);
+    if (!profile) break;
+    launchSession(profile);
+  }
 
-    // Boş slot varsa yeni session başlat
-    if (startedCount() < browserCount) {
-      // Background'da başlat, yarış için bekleme
-      startOne().catch(() => {});
-      await sleep(500);
-      continue;
-    }
+  // Continuous queue: bir biter bitmez yenisi başlasın
+  while (!shouldStop() && active.size > 0) {
+    await Promise.race([...active.keys()]);
 
-    // Hepsi dolu, bir tanesi bitene kadar bekle
-    if (active.size > 0) {
-      await Promise.race([...active.keys()]);
-    } else {
-      await sleep(1000);
+    // Slot doldur
+    while (active.size < browserCount && !shouldStop()) {
+      await sleep(2000 + Math.random() * 2000); // yeni başlatma arası 2-4s
+      await resetIfNeeded(profiles);
+      const [profile] = pickProfiles(profiles, 1);
+      if (!profile) break;
+      launchSession(profile);
     }
   }
 
-  // Kalan tüm session'ları bekle
+  // Kalan session'ları bekle
   console.log(`\nDurma sinyali, kalan ${active.size} session bekleniyor...`);
   await Promise.allSettled([...active.keys()]);
 

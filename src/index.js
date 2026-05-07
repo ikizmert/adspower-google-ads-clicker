@@ -117,12 +117,13 @@ async function runSession(profile, parsedQueries) {
   let sessionClicked = 0;
   let sessionHits = 0;
   const sessionRankings = [];
+  const sessionAdClicks = {}; // domain bazlı session tıklama sayacı
 
   for (let qi = 0; qi < sessionQueries.length; qi++) {
     const q = sessionQueries[qi];
     let result;
     try {
-      result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel);
+      result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks);
     } catch (e) {
       console.error(`[${sessionLabel}] Query hatası ("${q.search}"): ${e.message.split("\n")[0]} — atlanıyor`);
       continue;
@@ -139,7 +140,7 @@ async function runSession(profile, parsedQueries) {
           const { wsEndpoint } = await openBrowser(profileId);
           browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
           await closeExtraTabs(browser);
-          result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel);
+          result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks);
           if (result.error !== "bot_detected") break;
         } catch (e) {
           console.log(`[${sessionLabel}] Retry ${retry} başarısız: ${e.message.split("\n")[0]}`);
@@ -242,8 +243,55 @@ async function run() {
 
   stats.maxRun = unlimited ? Infinity : maxRun;
   let lastClickTime = Date.now();
+  const SESSION_TIMEOUT = 8 * 60 * 1000;
 
-  while (unlimited || stats.completed < maxRun) {
+  // Continuous queue: daima browser_count aktif slot, biri biter biter biter yenisi başlar
+  const active = new Map(); // promise -> profileId
+  let starting = 0; // henüz başlatılmakta olan session sayısı
+  let stop = false;
+
+  function startedCount() { return active.size + starting; }
+
+  async function startOne() {
+    const remaining = unlimited ? Infinity : (maxRun - stats.completed - startedCount());
+    if (remaining <= 0) return false;
+
+    await resetIfNeeded(profiles);
+    const [profile] = pickProfiles(profiles, 1);
+    if (!profile) return false;
+
+    starting++;
+    // Stagger: her yeni başlatma arası 5-10s
+    const staggerMs = 5000 + Math.random() * 5000;
+    await sleep(staggerMs);
+    starting--;
+
+    console.log(`▶ Session başlıyor: #${profile.serial || profile.id}`);
+
+    const sessionPromise = (async () => {
+      try {
+        return await Promise.race([
+          runSession(profile, parsedQueries),
+          new Promise((_, reject) => setTimeout(() => reject(new Error("Session timeout (8dk)")), SESSION_TIMEOUT)),
+        ]);
+      } catch (e) {
+        console.error(`Session hatası (#${profile.serial || profile.id}): ${e.message.split("\n")[0]} — atlanıyor`);
+        try { await closeBrowser(profile.id); } catch {}
+        return { clicked: 0, hits: 0, adsFound: 0 };
+      }
+    })();
+
+    active.set(sessionPromise, profile.id);
+    sessionPromise.then((r) => {
+      if (r && (r.clicked > 0 || (r.hits || 0) > 0)) lastClickTime = Date.now();
+      console.log(`◀ Session bitti: #${profile.serial || profile.id} | aktif: ${active.size - 1}`);
+      active.delete(sessionPromise);
+    });
+
+    return true;
+  }
+
+  while (!stop) {
     if (maxTotalClicks > 0 && stats.totalClicked >= maxTotalClicks) {
       stats.stopReason = `Max tıklama (${maxTotalClicks}) ulaşıldı`;
       break;
@@ -252,42 +300,27 @@ async function run() {
       stats.stopReason = `${config.behavior.idle_timeout_minutes}dk boyunca tıklama yok`;
       break;
     }
+    if (!unlimited && stats.completed >= maxRun) break;
 
-    await resetIfNeeded(profiles);
-
-    const remaining = unlimited ? Infinity : (maxRun - stats.completed);
-    const batchSize = Math.min(browserCount, remaining, profiles.length);
-    const selectedProfiles = pickProfiles(profiles, batchSize);
-
-    const profileLabels = selectedProfiles.map((p) => `#${p.serial || p.id}`).join(", ");
-    console.log(`\n=== Batch (${selectedProfiles.length} paralel: ${profileLabels}) ===`);
-
-    const promises = selectedProfiles.map(async (profile, i) => {
-      // Browser'lar arasında 15-30s random stagger (eşzamanlı pattern'den kaçın)
-      await sleep(i * (15000 + Math.random() * 15000));
-      try {
-        return await runSession(profile, parsedQueries);
-      } catch (e) {
-        console.error(`Session hatası (#${profile.serial || profile.id}): ${e.message.split("\n")[0]} — atlanıyor`);
-        return { clicked: 0, hits: 0, adsFound: 0 };
-      }
-    });
-    const results = await Promise.allSettled(promises);
-
-    // stats.completed/totalClicked/totalHits/totalFailed runSession içinde güncellenmiş durumda
-    for (const settled of results) {
-      const r = settled.status === "fulfilled" ? settled.value : { clicked: 0, hits: 0 };
-      if (r.clicked > 0 || (r.hits || 0) > 0) lastClickTime = Date.now();
+    // Boş slot varsa yeni session başlat
+    if (startedCount() < browserCount) {
+      // Background'da başlat, yarış için bekleme
+      startOne().catch(() => {});
+      await sleep(500);
+      continue;
     }
 
-    console.log(`Batch bitti | toplam: ${stats.completed}/${maxRun} | reklam tıklama: ${stats.totalClicked} | organik tıklama: ${stats.totalHits} | başarısız: ${stats.totalFailed}`);
-
-    if (stats.completed < maxRun) {
-      const wait = (3 + Math.random() * 5) * config.behavior.wait_factor;
-      console.log(`Sonraki batch için ${wait.toFixed(1)}s bekleniyor...`);
-      await sleep(wait * 1000);
+    // Hepsi dolu, bir tanesi bitene kadar bekle
+    if (active.size > 0) {
+      await Promise.race([...active.keys()]);
+    } else {
+      await sleep(1000);
     }
   }
+
+  // Kalan tüm session'ları bekle
+  console.log(`\nDurma sinyali, kalan ${active.size} session bekleniyor...`);
+  await Promise.allSettled([...active.keys()]);
 
   if (!summaryPrinted) {
     summaryPrinted = true;

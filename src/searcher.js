@@ -369,7 +369,7 @@ async function clickInNewTab(browser, page, element) {
   return null;
 }
 
-async function searchAndClick(browser, query, adDomains, hitDomains, label = "") {
+async function searchAndClick(browser, query, adDomains, hitDomains, label = "", sessionAdClicks = {}) {
   let page = (await browser.pages())[0] || (await browser.newPage());
   const tag = label ? `[${label}] ` : "  ";
 
@@ -392,6 +392,7 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "")
   let totalAdsOnPage = 0;
   let adClicked = 0;
   let hitClicked = 0;
+  const maxAdClicksPerDomain = config.behavior.max_clicks_per_domain || (2 + Math.floor(Math.random() * 2));
   const clickedHitDomains = new Set();
   const loggedHitDomains = new Set();
   const rankings = [];
@@ -412,16 +413,19 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "")
     const adDomainsList = allAdDomains.length > 0 ? ` [${allAdDomains.join(", ")}]` : "";
     console.log(`${tag}[Sayfa ${pg}] Toplam reklam: ${totalAds}${adDomainsList} | Hedef reklam: ${searchAds ? ads.length : "atlandı"} | Organik hit: ${searchHits ? organics.length : "atlandı"}`);
 
-    // Reklamlara tıkla (yeni sekmede) - sadece pg <= 3, her sayfada tüm hedef reklamlar tıklanır
+    // Reklamlara tıkla (yeni sekmede) - domain başına max 2-3
     if (searchAds) {
       for (const ad of ads) {
+        const domainCount = sessionAdClicks[ad.domain] || 0;
+        if (domainCount >= maxAdClicksPerDomain) continue;
         try {
           const newTab = await clickInNewTab(browser, page, ad.element);
           if (newTab) {
             adClicked++;
+            sessionAdClicks[ad.domain] = domainCount + 1;
             recordAd(ad.domain);
             clickCounter.record(ad.domain, "ads");
-            console.log(`${tag}✓ Reklam tıklandı: ${ad.domain} → ${newTab.url()}`);
+            console.log(`${tag}✓ Reklam tıklandı: ${ad.domain} (${sessionAdClicks[ad.domain]}/${maxAdClicksPerDomain}) → ${newTab.url()}`);
             await browseAdPage(newTab, tag);
             await newTab.close();
             await randomSleep(1, 2);

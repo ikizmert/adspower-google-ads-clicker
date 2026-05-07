@@ -293,18 +293,27 @@ async function run() {
     launchSession(profile);
   }
 
-  // Continuous queue: bir biter bitmez yenisi başlasın
-  while (!shouldStop() && active.size > 0) {
-    await Promise.race([...active.keys()]);
-
-    // Slot doldur
+  // Continuous queue: periyodik slot kontrolü (her 30s veya bir session bittiğinde)
+  while (!shouldStop()) {
+    // Boş slot varsa doldur
     while (active.size < browserCount && !shouldStop()) {
-      await sleep(2000 + Math.random() * 2000); // yeni başlatma arası 2-4s
+      await sleep(2000 + Math.random() * 2000); // 2-4s aralık
       await resetIfNeeded(profiles);
       const [profile] = pickProfiles(profiles, 1);
       if (!profile) break;
       launchSession(profile);
     }
+
+    if (active.size === 0) {
+      await sleep(5000);
+      continue;
+    }
+
+    // Bir session bitene kadar bekle (max 30s — asılı kalanlar için periyodik kontrol)
+    await Promise.race([
+      Promise.race([...active.keys()]),
+      sleep(30000),
+    ]);
   }
 
   // Kalan session'ları bekle

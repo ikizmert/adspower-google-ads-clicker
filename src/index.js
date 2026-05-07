@@ -1,7 +1,7 @@
 const puppeteer = require("puppeteer-core");
 const { config, queries, parseQuery } = require("./config");
-const { checkStatus, openBrowser, closeBrowser, listProfiles, clearCache } = require("./adspower");
-const { searchAndClick, closeExtraTabs, enableImageBlocking } = require("./searcher");
+const { checkStatus, openBrowser, closeBrowser, listProfiles, clearCache, applyStickyProxy } = require("./adspower");
+const { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, sessionWarmup } = require("./searcher");
 const tracker = require("./profile-tracker");
 const clickCounter = require("./click-counter");
 const { state: stats } = require("./stats");
@@ -69,26 +69,12 @@ async function resetIfNeeded(profiles) {
 }
 
 function pickProfiles(profiles, count) {
-  // Hiç kullanılmamış profiller (sessions=0)
-  const unused = profiles.filter((p) => !tracker.getProfile(p.id).sessions);
-  // Kullanılmışlar - en uzun süre önce kullanılan başta
-  const used = profiles
-    .filter((p) => tracker.getProfile(p.id).sessions)
-    .sort((a, b) => {
-      const la = tracker.getProfile(a.id).last_used || 0;
-      const lb = tracker.getProfile(b.id).last_used || 0;
-      return la - lb;
-    });
-
-  // Hiç kullanılmamışları rastgele karıştır
-  for (let i = unused.length - 1; i > 0; i--) {
+  const shuffled = [...profiles];
+  for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [unused[i], unused[j]] = [unused[j], unused[i]];
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-
-  // Önce unused, sonra used
-  const all = [...unused, ...used];
-  return all.slice(0, Math.min(count, all.length));
+  return shuffled.slice(0, Math.min(count, shuffled.length));
 }
 
 async function runSession(profile, parsedQueries) {
@@ -98,6 +84,9 @@ async function runSession(profile, parsedQueries) {
   const profileStats = tracker.getProfile(profileId);
 
   console.log(`[${sessionLabel}] ${profileName} (oturum: ${profileStats.sessions + 1}/5) başlıyor...`);
+
+  // Browser açılmadan önce sticky proxy uygula (session boyunca sabit IP)
+  await applyStickyProxy(profileId).catch(() => {});
 
   let browser;
   try {
@@ -112,10 +101,16 @@ async function runSession(profile, parsedQueries) {
     await enableImageBlocking(browser);
   }
 
-  // Profili pilot klonu state'inde bırak — temizleme yapma
-  // (cache/cookie temizleme Google'a "fresh user" sinyali veriyor → captcha)
-
   await closeExtraTabs(browser);
+  // TODO: clearGoogleCookies ve warmup geçici kapalı — captcha testi
+  // await clearGoogleCookies(browser);
+  // await sessionWarmup(page, `[${sessionLabel}] `);
+
+  // Passive mod
+  if (process.argv.includes("--passive")) {
+    console.log(`[${sessionLabel}] PASSIVE MODE — manuel arama yap, Ctrl+C ile çık`);
+    await new Promise(() => {});
+  }
 
   const sessionQueries = shuffle([...parsedQueries]);
   let sessionAdsFound = 0;
@@ -123,17 +118,43 @@ async function runSession(profile, parsedQueries) {
   let sessionHits = 0;
   const sessionRankings = [];
 
-  for (const q of sessionQueries) {
+  for (let qi = 0; qi < sessionQueries.length; qi++) {
+    const q = sessionQueries[qi];
+    let result;
     try {
-      const result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel);
-
-      if (result.totalAdsOnPage > 0) sessionAdsFound += result.totalAdsOnPage;
-      // stats.totalClicked / stats.totalHits searcher.js'de tıklama anında artırılıyor
-      if (result.hits > 0) sessionHits += result.hits;
-      if (result.ads > 0) sessionClicked += result.ads;
-      if (result.rankings) sessionRankings.push({ query: q.search, rankings: result.rankings, notFound: result.notFound || [] });
+      result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel);
     } catch (e) {
       console.error(`[${sessionLabel}] Query hatası ("${q.search}"): ${e.message.split("\n")[0]} — atlanıyor`);
+      continue;
+    }
+
+    // Captcha çıktıysa → browser kapat, yeni IP ile tekrar dene (max 3 retry)
+    if (result.error === "bot_detected" && qi === 0) {
+      for (let retry = 1; retry <= 3; retry++) {
+        console.log(`[${sessionLabel}] ⚠ Captcha — yeni IP deneniyor (${retry}/3)...`);
+        try { browser.disconnect(); await closeBrowser(profileId); } catch {}
+        await sleep(2000);
+        await applyStickyProxy(profileId).catch(() => {});
+        try {
+          const { wsEndpoint } = await openBrowser(profileId);
+          browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
+          await closeExtraTabs(browser);
+          result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel);
+          if (result.error !== "bot_detected") break;
+        } catch (e) {
+          console.log(`[${sessionLabel}] Retry ${retry} başarısız: ${e.message.split("\n")[0]}`);
+        }
+      }
+    }
+
+    if (result && result.totalAdsOnPage > 0) sessionAdsFound += result.totalAdsOnPage;
+    if (result && result.hits > 0) sessionHits += result.hits;
+    if (result && result.ads > 0) sessionClicked += result.ads;
+    if (result && result.rankings) sessionRankings.push({ query: q.search, rankings: result.rankings, notFound: result.notFound || [] });
+
+    if (result && result.error === "bot_detected") {
+      console.log(`[${sessionLabel}] ⚠ 3 retry sonrası hala captcha — session atlanıyor`);
+      break;
     }
 
     const wait = (5 + Math.random() * 10) * config.behavior.wait_factor;
@@ -242,7 +263,8 @@ async function run() {
     console.log(`\n=== Batch (${selectedProfiles.length} paralel: ${profileLabels}) ===`);
 
     const promises = selectedProfiles.map(async (profile, i) => {
-      await sleep(i * 3000);
+      // Browser'lar arasında 15-30s random stagger (eşzamanlı pattern'den kaçın)
+      await sleep(i * (15000 + Math.random() * 15000));
       try {
         return await runSession(profile, parsedQueries);
       } catch (e) {

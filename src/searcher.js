@@ -15,52 +15,125 @@ function randomSleep(minSec, maxSec) {
 }
 
 async function closeExtraTabs(browser) {
+  // Yeni boş bir tab aç (about:blank — henüz hiçbir siteye gitme)
+  const newTab = await browser.newPage();
+  // Diğer tüm tabları kapat (önceki session'dan kalan tablar dahil)
   const pages = await browser.pages();
-  for (let i = 1; i < pages.length; i++) {
-    await pages[i].close().catch(() => {});
+  for (const p of pages) {
+    if (p !== newTab) {
+      await p.close().catch(() => {});
+    }
   }
-  const remaining = await browser.pages();
-  if (remaining.length > 0) {
-    await remaining[0].goto("about:blank").catch(() => {});
+  // Tab about:blank'ta kalır — cookie temizleme sonrası doSearch google.com'a gider
+}
+
+
+
+async function isCaptchaPage(page) {
+  try {
+    const url = page.url();
+    if (url.includes("/sorry") || url.includes("captcha")) return true;
+    const content = await page.content();
+    if (content.includes("having trouble") || content.includes("unusual traffic")) return true;
+    if (content.includes("g-recaptcha") || content.includes("recaptcha")) return true;
+    return false;
+  } catch {
+    return false;
   }
 }
 
-async function applyPilotCookies(browser, cookiesPath) {
-  const fs = require("fs");
-  if (!fs.existsSync(cookiesPath)) {
-    console.log(`  ⚠ Pilot cookies dosyası bulunamadı: ${cookiesPath}`);
-    return;
-  }
-  const cookies = JSON.parse(fs.readFileSync(cookiesPath, "utf-8"));
-  if (!cookies.length) return;
+async function sessionWarmup(page, tag = "") {
+  console.log(`${tag}🔥 Warmup başlıyor...`);
 
-  const pages = await browser.pages();
-  if (pages.length === 0) return;
-  const session = await pages[0].target().createCDPSession();
+  // 1. Facebook
   try {
-    await session.send("Network.setCookies", { cookies });
-    console.log(`  ✓ ${cookies.length} pilot cookie uygulandı`);
+    await page.goto("https://www.facebook.com", { waitUntil: "domcontentloaded", timeout: 20000 });
+    await randomSleep(2, 4);
+    for (let i = 0; i < 2 + Math.floor(Math.random() * 3); i++) {
+      await page.evaluate((amount) => {
+        if (typeof window !== "undefined") window.scrollBy({ top: amount, behavior: "smooth" });
+      }, 200 + Math.random() * 400).catch(() => {});
+      await sleep(1000 + Math.random() * 2000);
+    }
+    console.log(`${tag}  ✓ Facebook`);
   } catch (e) {
-    console.log(`  ✗ Cookie uygulama hatası: ${e.message.split("\n")[0]}`);
+    console.log(`${tag}  ✗ Facebook: ${e.message.split("\n")[0]}`);
   }
-  await session.detach().catch(() => {});
+  await randomSleep(1, 3);
+
+  // 2. Google News — bir habere tıkla
+  try {
+    await page.goto("https://news.google.com", { waitUntil: "domcontentloaded", timeout: 20000 });
+    await randomSleep(2, 4);
+    for (let i = 0; i < 3; i++) {
+      await page.evaluate((amount) => {
+        if (typeof window !== "undefined") window.scrollBy({ top: amount, behavior: "smooth" });
+      }, 200 + Math.random() * 300).catch(() => {});
+      await sleep(800 + Math.random() * 1500);
+    }
+    const newsLink = await page.$('article a[href], c-wiz a[href]');
+    if (newsLink) {
+      await newsLink.click().catch(() => {});
+      await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
+      await randomSleep(3, 6);
+      for (let i = 0; i < 2; i++) {
+        await page.evaluate((amount) => {
+          if (typeof window !== "undefined") window.scrollBy({ top: amount, behavior: "smooth" });
+        }, 200 + Math.random() * 400).catch(() => {});
+        await sleep(1000 + Math.random() * 1500);
+      }
+      console.log(`${tag}  ✓ Google News (habere tıklandı)`);
+    } else {
+      console.log(`${tag}  ✓ Google News (gezildi)`);
+    }
+  } catch (e) {
+    console.log(`${tag}  ✗ Google News: ${e.message.split("\n")[0]}`);
+  }
+  await randomSleep(1, 3);
+
+  // 3. Gmail
+  try {
+    await page.goto("https://mail.google.com", { waitUntil: "domcontentloaded", timeout: 20000 });
+    await randomSleep(3, 6);
+    await page.evaluate(() => {
+      if (typeof window !== "undefined") window.scrollBy({ top: 200, behavior: "smooth" });
+    }).catch(() => {});
+    await randomSleep(2, 4);
+    console.log(`${tag}  ✓ Gmail`);
+  } catch (e) {
+    console.log(`${tag}  ✗ Gmail: ${e.message.split("\n")[0]}`);
+  }
+  await randomSleep(1, 2);
+
+  console.log(`${tag}✓ Warmup tamamlandı`);
 }
 
-async function clearAllBrowserData(browser) {
-  // CDP ile tüm storage'ı temizle (cookies + localStorage + IndexedDB + cache + service workers + history)
+
+
+async function clearGoogleCookies(browser) {
+  // Sadece google.com domain'indeki cookie'leri sil (NID, 1P_JAR vb. IP referansları)
   const pages = await browser.pages();
   if (pages.length === 0) return;
   const session = await pages[0].target().createCDPSession();
   try {
-    await session.send("Network.clearBrowserCookies").catch(() => {});
-    await session.send("Network.clearBrowserCache").catch(() => {});
-    await session.send("Storage.clearDataForOrigin", {
-      origin: "*",
-      storageTypes: "all",
-    }).catch(() => {});
-  } catch {}
+    const { cookies } = await session.send("Network.getAllCookies");
+    const googleCookies = cookies.filter((c) =>
+      c.domain.includes("google.com") || c.domain.includes(".google.")
+    );
+    for (const c of googleCookies) {
+      await session.send("Network.deleteCookies", {
+        name: c.name,
+        domain: c.domain,
+        path: c.path,
+      }).catch(() => {});
+    }
+    console.log(`  ${googleCookies.length} Google cookie temizlendi`);
+  } catch (e) {
+    console.log(`  ✗ Google cookie temizleme hatası: ${e.message.split("\n")[0]}`);
+  }
   await session.detach().catch(() => {});
 }
+
 
 async function setupImageBlocking(page) {
   await page.setRequestInterception(true).catch(() => {});
@@ -86,42 +159,44 @@ async function enableImageBlocking(browser) {
   });
 }
 
-async function doSearch(page, query, tag = "") {
+async function doSearch(browser, _page, query, tag = "") {
+  // Yeni sekme aç → Google.com → arama kutusuna yaz → Enter
   try {
-    await page.goto(GOOGLE_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
+    const newPage = await browser.newPage();
+    await newPage.goto(GOOGLE_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
     await randomSleep(1, 2);
 
-    const searchInput = await page.$('textarea[name="q"], input[name="q"]');
+    const searchInput = await newPage.$('textarea[name="q"], input[name="q"]');
     if (searchInput) {
-      await searchInput.click({ clickCount: 3 });
-      await randomSleep(0.3, 0.6);
-      await searchInput.type(query, { delay: 50 + Math.random() * 100 });
-      await randomSleep(0.5, 1);
-
-      await page.keyboard.press("Escape");
-      await randomSleep(0.3, 0.5);
+      await searchInput.click();
+      await randomSleep(0.4, 0.9);
+      await searchInput.type(query, { delay: 100 + Math.random() * 150 });
+      await randomSleep(0.8, 1.4);
       await Promise.all([
-        page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }),
-        page.keyboard.press("Enter"),
+        newPage.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }),
+        newPage.keyboard.press("Enter"),
       ]);
-      if (page.url().includes("/search")) return true;
+      if (newPage.url().includes("/search")) return newPage;
     }
   } catch (e) {
-    console.log(`${tag}[!] Yazarak arama başarısız: ${e.message.split("\n")[0]}`);
+    console.log(`${tag}[!] Arama başarısız: ${e.message.split("\n")[0]}`);
   }
 
+  // Fallback: URL ile arama
   try {
     console.log(`${tag}[!] URL ile arama deneniyor...`);
-    await page.goto(
+    const fallback = await browser.newPage();
+    await fallback.goto(
       `${GOOGLE_URL}/search?q=${encodeURIComponent(query)}`,
       { waitUntil: "domcontentloaded", timeout: 30000 }
     );
     await randomSleep(1, 2);
-    return page.url().includes("/search");
+    if (fallback.url().includes("/search")) return fallback;
   } catch (e) {
     console.log(`${tag}✗ Arama tamamen başarısız: ${e.message.split("\n")[0]}`);
-    return false;
   }
+
+  return null;
 }
 
 async function scanPage(page, adDomains, hitDomains) {
@@ -264,7 +339,7 @@ async function clickInNewTab(browser, page, element) {
   let allPages = await browser.pages();
   if (allPages.length > pagesBefore) {
     const newTab = allPages[allPages.length - 1];
-    await newTab.bringToFront();
+    // bringToFront kaldırıldı — kullanıcının window'u focus kaybetmesin
     await newTab.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
     return newTab;
   }
@@ -278,7 +353,7 @@ async function clickInNewTab(browser, page, element) {
   allPages = await browser.pages();
   if (allPages.length > pagesBefore) {
     const newTab = allPages[allPages.length - 1];
-    await newTab.bringToFront();
+    // bringToFront kaldırıldı — kullanıcının window'u focus kaybetmesin
     await newTab.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
     return newTab;
   }
@@ -295,20 +370,22 @@ async function clickInNewTab(browser, page, element) {
 }
 
 async function searchAndClick(browser, query, adDomains, hitDomains, label = "") {
-  const page = (await browser.pages())[0] || (await browser.newPage());
+  let page = (await browser.pages())[0] || (await browser.newPage());
   const tag = label ? `[${label}] ` : "  ";
 
   console.log(`${tag}Aranıyor: "${query}"`);
 
-  const searched = await doSearch(page, query, tag);
-  if (!searched) {
+  // Yeni sekme aç + address bar'a keyword yaz (en doğal)
+  const searchResult = await doSearch(browser, page, query, tag);
+  if (!searchResult) {
     return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "search_failed" };
   }
+  page = searchResult;
   await randomSleep(1, 2);
 
-  const content = await page.content();
-  if (content.includes("having trouble") || content.includes("unusual traffic")) {
-    console.log("  ⚠ Google bot algıladı — session atlanıyor");
+  // Captcha tespit → session atla
+  if (await isCaptchaPage(page)) {
+    console.log(`${tag}⚠ Captcha algılandı — session atlanıyor`);
     return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
   }
 
@@ -347,7 +424,6 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "")
             console.log(`${tag}✓ Reklam tıklandı: ${ad.domain} → ${newTab.url()}`);
             await browseAdPage(newTab, tag);
             await newTab.close();
-            await page.bringToFront();
             await randomSleep(1, 2);
           } else {
             console.log(`${tag}✗ Reklam yeni sekmede açılamadı: ${ad.domain}`);
@@ -381,7 +457,6 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "")
           logRanking({ query, domain: hit.domain, page: pg, position: globalPosition, clicked: true });
           await browseAdPage(newTab, tag);
           // Organik sekmesi session sonuna kadar açık kalır
-          await page.bringToFront();
           await randomSleep(1, 2);
         } else {
           console.log(`${tag}✗ Yeni sekmede açılamadı: ${hit.domain}`);
@@ -519,4 +594,4 @@ function extractDomain(url) {
   }
 }
 
-module.exports = { searchAndClick, closeExtraTabs, enableImageBlocking, clearAllBrowserData, applyPilotCookies };
+module.exports = { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, sessionWarmup };

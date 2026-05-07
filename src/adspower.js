@@ -74,6 +74,55 @@ async function getProfileInfo(profileId) {
   };
 }
 
+function randomSid() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let sid = "";
+  for (let i = 0; i < 8; i++) sid += chars[Math.floor(Math.random() * chars.length)];
+  return sid;
+}
+
+async function applyStickyProxy(profileId) {
+  const infoUrl = `${API}/api/v1/user/list?user_id=${profileId}`;
+  const infoRes = await fetch(infoUrl);
+  const infoData = await infoRes.json();
+  if (infoData.code !== 0 || !infoData.data.list.length) return;
+
+  const proxy = infoData.data.list[0].user_proxy_config;
+  if (!proxy || !proxy.proxy_user) return;
+
+  const sid = randomSid();
+  let user = proxy.proxy_user;
+
+  // Aproxy format: _session-XXX_life-N
+  if (user.includes("_session-") || user.includes("ap-")) {
+    user = user.replace(/_session-[^_]+/g, "").replace(/_life-\d+/g, "");
+    user = `${user}_session-${sid}_life-30`;
+  }
+  // Weproxy format: -sid-XXX-t-N
+  else if (user.includes("-sid-") || user.includes("kte")) {
+    user = user.replace(/-sid-[^-]+-t-\d+/g, "");
+    user = `${user}-sid-${sid}-t-30`;
+  }
+  // Bilinmeyen format: weproxy varsay
+  else {
+    user = `${user}-sid-${sid}-t-30`;
+  }
+
+  const updateUrl = `${API}/api/v1/user/update`;
+  const updateRes = await fetch(updateUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      user_id: profileId,
+      user_proxy_config: { ...proxy, proxy_user: user },
+    }),
+  });
+  const updateData = await updateRes.json();
+  if (updateData.code === 0) {
+    console.log(`  Sticky proxy: sid=${sid} (30dk)`);
+  }
+}
+
 async function clearCache(profileId) {
   const url = `${API}/api/v1/user/delete-cache`;
   const res = await fetch(url, {
@@ -85,4 +134,4 @@ async function clearCache(profileId) {
   return data.code === 0;
 }
 
-module.exports = { checkStatus, openBrowser, closeBrowser, listProfiles, getProfileInfo, clearCache };
+module.exports = { checkStatus, openBrowser, closeBrowser, listProfiles, getProfileInfo, clearCache, applyStickyProxy };

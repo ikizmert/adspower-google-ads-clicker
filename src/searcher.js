@@ -535,38 +535,56 @@ async function browseAdPage(page, tag = "") {
   const minWait = config.behavior.ad_page_min_wait;
   const maxWait = config.behavior.ad_page_max_wait;
   const totalTime = (minWait + Math.random() * (maxWait - minWait)) * 1000;
+  const HARD_TIMEOUT = totalTime + 30000; // ekstra 30s tolerans
   const startTime = Date.now();
 
-  await sleep(1500 + Math.random() * 1000);
+  // Page evaluate'lere timeout ile sarmal — askıda kalmasın
+  const safeEval = (fn, arg) =>
+    Promise.race([
+      page.evaluate(fn, arg),
+      new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
+    ]).catch(() => null);
 
-  while (Date.now() - startTime < totalTime) {
-    const scrollAmount = 50 + Math.floor(Math.random() * 250);
-    await page.evaluate((amount) => {
-      window.scrollBy({ top: amount, behavior: "smooth" });
-    }, scrollAmount);
+  const browse = async () => {
+    await sleep(1500 + Math.random() * 1000);
 
-    if (Math.random() < 0.3) {
-      await sleep(2000 + Math.random() * 3000);
-    } else {
-      await sleep(800 + Math.random() * 1500);
+    while (Date.now() - startTime < totalTime) {
+      const scrollAmount = 50 + Math.floor(Math.random() * 250);
+      await safeEval((amount) => {
+        if (typeof window !== "undefined") window.scrollBy({ top: amount, behavior: "smooth" });
+      }, scrollAmount);
+
+      if (Math.random() < 0.3) {
+        await sleep(2000 + Math.random() * 3000);
+      } else {
+        await sleep(800 + Math.random() * 1500);
+      }
+
+      if (Math.random() < 0.25) {
+        const vw = await safeEval(() => window.innerWidth) || 1280;
+        const vh = await safeEval(() => window.innerHeight) || 720;
+        await humanMouseMove(page, Math.random() * vw * 0.8 + vw * 0.1, Math.random() * vh * 0.6 + vh * 0.2).catch(() => {});
+      }
+
+      if (Math.random() < 0.1) {
+        const upAmount = 30 + Math.floor(Math.random() * 100);
+        await safeEval((amount) => {
+          if (typeof window !== "undefined") window.scrollBy({ top: -amount, behavior: "smooth" });
+        }, upAmount);
+        await sleep(500 + Math.random() * 800);
+      }
     }
+  };
 
-    if (Math.random() < 0.25) {
-      const vw = await page.evaluate(() => window.innerWidth);
-      const vh = await page.evaluate(() => window.innerHeight);
-      await humanMouseMove(page, Math.random() * vw * 0.8 + vw * 0.1, Math.random() * vh * 0.6 + vh * 0.2);
-    }
-
-    if (Math.random() < 0.1) {
-      const upAmount = 30 + Math.floor(Math.random() * 100);
-      await page.evaluate((amount) => {
-        window.scrollBy({ top: -amount, behavior: "smooth" });
-      }, upAmount);
-      await sleep(500 + Math.random() * 800);
-    }
+  try {
+    await Promise.race([
+      browse(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("browseAdPage hard timeout")), HARD_TIMEOUT)),
+    ]);
+    console.log(`${tag}📄 Sitede ${(totalTime / 1000).toFixed(0)}s gezildi`);
+  } catch (e) {
+    console.log(`${tag}⚠ browseAdPage timeout: ${e.message.split("\n")[0]}`);
   }
-
-  console.log(`${tag}📄 Sitede ${(totalTime / 1000).toFixed(0)}s gezildi`);
 }
 
 async function autoScroll(page) {

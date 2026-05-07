@@ -68,8 +68,9 @@ async function resetIfNeeded(profiles) {
   }
 }
 
-function pickProfiles(profiles, count) {
-  const shuffled = [...profiles];
+function pickProfiles(profiles, count, excludeIds = new Set()) {
+  const available = profiles.filter((p) => !excludeIds.has(p.id));
+  const shuffled = [...available];
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
@@ -243,18 +244,25 @@ async function run() {
 
   stats.maxRun = unlimited ? Infinity : maxRun;
   let lastClickTime = Date.now();
+  let lastClickedSnapshot = stats.totalClicked;
   const SESSION_TIMEOUT = 8 * 60 * 1000;
 
   // Continuous queue: ana loop sequential, sessionlar paralel
   const active = new Map(); // promise -> profileId
 
   function shouldStop() {
+    // stats.totalClicked anlık güncelleniyor (searcher.js recordAd) — değişimi izle
+    if (stats.totalClicked > lastClickedSnapshot) {
+      lastClickedSnapshot = stats.totalClicked;
+      lastClickTime = Date.now();
+    }
     if (maxTotalClicks > 0 && stats.totalClicked >= maxTotalClicks) {
       stats.stopReason = `Max tıklama (${maxTotalClicks}) ulaşıldı`;
       return true;
     }
     if (idleTimeoutMs > 0 && Date.now() - lastClickTime > idleTimeoutMs) {
-      stats.stopReason = `${config.behavior.idle_timeout_minutes}dk boyunca tıklama yok`;
+      const dakika = Math.round((Date.now() - lastClickTime) / 60000);
+      stats.stopReason = `${config.behavior.idle_timeout_minutes}dk boyunca reklam tıklama yok (${dakika}dk geçti)`;
       return true;
     }
     if (!unlimited && stats.completed >= maxRun) return true;
@@ -263,6 +271,7 @@ async function run() {
 
   function launchSession(profile) {
     console.log(`▶ Session başlıyor: #${profile.serial || profile.id} | aktif: ${active.size + 1}`);
+    let cleaned = false;
     const sessionPromise = (async () => {
       try {
         return await Promise.race([
@@ -277,6 +286,8 @@ async function run() {
     })();
     active.set(sessionPromise, profile.id);
     sessionPromise.then((r) => {
+      if (cleaned) return;
+      cleaned = true;
       if (r && (r.clicked > 0 || (r.hits || 0) > 0)) lastClickTime = Date.now();
       active.delete(sessionPromise);
       console.log(`◀ Session bitti: #${profile.serial || profile.id} | aktif: ${active.size}`);
@@ -288,7 +299,8 @@ async function run() {
     if (shouldStop()) break;
     if (i > 0) await sleep(3000 + Math.random() * 3000); // 3-6s stagger
     await resetIfNeeded(profiles);
-    const [profile] = pickProfiles(profiles, 1);
+    const activeIds = new Set(active.values());
+    const [profile] = pickProfiles(profiles, 1, activeIds);
     if (!profile) break;
     launchSession(profile);
   }
@@ -299,7 +311,8 @@ async function run() {
     while (active.size < browserCount && !shouldStop()) {
       await sleep(2000 + Math.random() * 2000); // 2-4s aralık
       await resetIfNeeded(profiles);
-      const [profile] = pickProfiles(profiles, 1);
+      const activeIds = new Set(active.values());
+    const [profile] = pickProfiles(profiles, 1, activeIds);
       if (!profile) break;
       launchSession(profile);
     }

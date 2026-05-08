@@ -105,22 +105,19 @@ async function runSession(profile, parsedQueries) {
     await enableImageBlocking(browser);
   }
 
-  // CapSolver extension'a API key inject et
+  // CapSolver extension'a API key inject et (her session başında)
   if (config.capsolver_api_key) {
     try {
       const targets = await browser.targets();
       const capsolverTarget = targets.find((t) =>
-        (t.type() === "background_page" || t.type() === "service_worker") &&
-        (t.url().includes("capsolver") || t.url().includes("captcha"))
+        t.type() === "service_worker" && t.url().includes("pgojnojmmhpofjgdmaebadhbocahppod")
       );
       if (capsolverTarget) {
-        const extPage = await capsolverTarget.page().catch(() => null) || capsolverTarget;
-        if (extPage && extPage.evaluate) {
-          await extPage.evaluate((key) => {
-            try { chrome.storage.local.set({ apiKey: key }); } catch {}
-            try { chrome.storage.sync.set({ apiKey: key }); } catch {}
-          }, config.capsolver_api_key).catch(() => {});
-        }
+        const worker = await capsolverTarget.worker();
+        await worker.evaluate((key) => {
+          const cfg = { apiKey: key, enabledForRecaptchaV2: true, enabledForRecaptchaV3: true, enabledForHCaptcha: true, enabledForImageToText: true };
+          chrome.storage.local.set({ config: cfg, defaultConfig: cfg });
+        }, config.capsolver_api_key);
       }
     } catch {}
   }

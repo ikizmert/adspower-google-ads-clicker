@@ -57,19 +57,17 @@ async function isCaptchaPage(page) {
 }
 
 async function solveCaptcha(page, tag = "") {
-  console.log(`${tag}🔓 Extension'ın captcha çözmesi bekleniyor (max 45sn)...`);
+  console.log(`${tag}🔓 Extension'ın captcha çözmesi bekleniyor (max 20sn)...`);
 
-  // Sayfayı öne getir (extension aktif tab'da çalışır)
   try { await page.bringToFront(); } catch {}
 
-  // Sayfayı reload et (extension reCAPTCHA widget'ını taze görsün)
   try {
     await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
     await sleep(3000);
   } catch {}
 
-  for (let i = 0; i < 14; i++) {
-    await sleep(3000);
+  for (let i = 0; i < 7; i++) {
+    await sleep(2500);
     try {
       const url = page.url();
       if (!url.includes("/sorry") && !url.includes("captcha")) {
@@ -78,7 +76,7 @@ async function solveCaptcha(page, tag = "") {
       }
     } catch { break; }
   }
-  console.log(`${tag}✗ Extension captcha çözemedi (45sn)`);
+  console.log(`${tag}✗ Extension captcha çözemedi (20sn)`);
   return false;
 }
 

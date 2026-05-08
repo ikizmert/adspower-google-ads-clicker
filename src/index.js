@@ -1,6 +1,9 @@
-const puppeteer = require("puppeteer-core");
+const puppeteer = require("puppeteer-extra");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+puppeteer.use(StealthPlugin());
 const { config, queries, parseQuery } = require("./config");
-const { checkStatus, openBrowser, closeBrowser, listProfiles, clearCache, applyStickyProxy } = require("./adspower");
+const provider = config.provider === "hyperbrowser" ? require("./hyperbrowser") : require("./adspower");
+const { checkStatus, openBrowser, closeBrowser, listProfiles, clearCache, applyStickyProxy } = provider;
 const { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, sessionWarmup } = require("./searcher");
 const tracker = require("./profile-tracker");
 const clickCounter = require("./click-counter");

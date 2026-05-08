@@ -64,6 +64,17 @@ async function solveCaptcha(page, tag = "") {
     const pageUrl = page.url();
     console.log(`${tag}🔓 Captcha çözülüyor (CapSolver)...`);
 
+    // Enterprise mi standart mı tespit et
+    const isEnterprise = await page.evaluate(() => {
+      const scripts = [...document.querySelectorAll("script[src]")];
+      return scripts.some((s) => s.src.includes("enterprise")) ||
+        !!document.querySelector("[data-enterprise]") ||
+        document.location.hostname.includes("google");
+    }).catch(() => true);
+
+    const taskType = isEnterprise ? "ReCaptchaV2EnterpriseTaskProxyLess" : "ReCaptchaV2TaskProxyLess";
+    console.log(`${tag}  Task: ${taskType}, siteKey: ${siteKey.substring(0, 10)}...`);
+
     // CapSolver task oluştur
     const createRes = await fetch("https://api.capsolver.com/createTask", {
       method: "POST",
@@ -71,7 +82,7 @@ async function solveCaptcha(page, tag = "") {
       body: JSON.stringify({
         clientKey: apiKey,
         task: {
-          type: "ReCaptchaV2TaskProxyLess",
+          type: taskType,
           websiteURL: pageUrl,
           websiteKey: siteKey,
         },

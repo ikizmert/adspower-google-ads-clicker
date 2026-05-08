@@ -141,16 +141,34 @@ async function solveCaptcha(page, tag = "") {
 
         await sleep(1000);
 
-        // Submit: önce button tıkla, sonra form.submit fallback
-        const urlBefore = page.url();
+        // Debug: sayfadaki form ve button'ları logla
+        const formDebug = await page.evaluate(() => {
+          const forms = document.querySelectorAll("form");
+          const buttons = document.querySelectorAll("input[type=submit], button[type=submit], button, input[type=button]");
+          const recaptchaInputs = document.querySelectorAll("[name='g-recaptcha-response'], #g-recaptcha-response");
+          return {
+            formCount: forms.length,
+            formAction: forms[0] ? forms[0].action : "yok",
+            formId: forms[0] ? forms[0].id : "yok",
+            buttonCount: buttons.length,
+            buttons: [...buttons].map((b) => `${b.tagName}#${b.id}.${b.className}[${b.type}]="${b.value || b.textContent}"`).slice(0, 5),
+            recaptchaInputCount: recaptchaInputs.length,
+            recaptchaValue: recaptchaInputs[0] ? recaptchaInputs[0].value.substring(0, 20) + "..." : "yok",
+          };
+        }).catch(() => ({ error: "evaluate failed" }));
+        console.log(`${tag}  Debug: ${JSON.stringify(formDebug)}`);
+
+        // Submit: tüm olası button/form yollarını dene
         try {
-          const submitBtn = await page.$('input[type="submit"], button[type="submit"], #submit, .submit, #recaptcha-verify-button');
+          const submitBtn = await page.$('#recaptcha-submit, input[type="submit"], button[type="submit"], #submit, .submit, #recaptcha-verify-button, form button, form input[value]');
           if (submitBtn) {
+            console.log(`${tag}  Submit button bulundu, tıklanıyor...`);
             await Promise.all([
               page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }),
               submitBtn.click(),
             ]).catch(() => {});
           } else {
+            console.log(`${tag}  Submit button yok, form.submit() deneniyor...`);
             await Promise.all([
               page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }),
               page.evaluate(() => { const f = document.querySelector("form"); if (f) f.submit(); }),

@@ -130,10 +130,12 @@ async function runSession(profile, parsedQueries) {
       continue;
     }
 
-    // Captcha çıktıysa → browser kapat, yeni IP ile tekrar dene (max 3 retry)
-    if (result.error === "bot_detected" && qi === 0) {
+    // Captcha veya connection error → browser kapat, yeni IP ile tekrar dene (max 3 retry)
+    const needsRetry = (r) => r && (r.error === "bot_detected" || r.error === "search_failed");
+    if (needsRetry(result) && qi === 0) {
       for (let retry = 1; retry <= 3; retry++) {
-        console.log(`[${sessionLabel}] ⚠ Captcha — yeni IP deneniyor (${retry}/3)...`);
+        const reason = result.error === "bot_detected" ? "Captcha" : "Bağlantı hatası";
+        console.log(`[${sessionLabel}] ⚠ ${reason} — yeni IP deneniyor (${retry}/3)...`);
         try { browser.disconnect(); await closeBrowser(profileId); } catch {}
         await sleep(2000);
         await applyStickyProxy(profileId).catch(() => {});
@@ -142,7 +144,7 @@ async function runSession(profile, parsedQueries) {
           browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
           await closeExtraTabs(browser);
           result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks);
-          if (result.error !== "bot_detected") break;
+          if (!needsRetry(result)) break;
         } catch (e) {
           console.log(`[${sessionLabel}] Retry ${retry} başarısız: ${e.message.split("\n")[0]}`);
         }
@@ -154,8 +156,9 @@ async function runSession(profile, parsedQueries) {
     if (result && result.ads > 0) sessionClicked += result.ads;
     if (result && result.rankings) sessionRankings.push({ query: q.search, rankings: result.rankings, notFound: result.notFound || [] });
 
-    if (result && result.error === "bot_detected") {
-      console.log(`[${sessionLabel}] ⚠ 3 retry sonrası hala captcha — session atlanıyor`);
+    if (needsRetry(result)) {
+      const reason = result.error === "bot_detected" ? "captcha" : "bağlantı hatası";
+      console.log(`[${sessionLabel}] ⚠ 3 retry sonrası hala ${reason} — session atlanıyor`);
       break;
     }
 

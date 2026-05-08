@@ -5,11 +5,24 @@ const LOG_PATH = path.join(__dirname, "..", "rankings.json");
 
 function load() {
   if (!fs.existsSync(LOG_PATH)) return [];
-  return JSON.parse(fs.readFileSync(LOG_PATH, "utf-8"));
+  try {
+    const raw = fs.readFileSync(LOG_PATH, "utf-8");
+    if (!raw.trim()) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function save(data) {
-  fs.writeFileSync(LOG_PATH, JSON.stringify(data, null, 2));
+  const tmp = LOG_PATH + ".tmp." + process.pid;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+    fs.renameSync(tmp, LOG_PATH);
+  } catch {
+    try { fs.unlinkSync(tmp); } catch {}
+  }
 }
 
 function logRanking({ query, domain, page, position, clicked, timestamp }) {

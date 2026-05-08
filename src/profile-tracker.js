@@ -5,11 +5,23 @@ const DATA_PATH = path.join(__dirname, "..", "profiles.json");
 
 function load() {
   if (!fs.existsSync(DATA_PATH)) return {};
-  return JSON.parse(fs.readFileSync(DATA_PATH, "utf-8"));
+  try {
+    const raw = fs.readFileSync(DATA_PATH, "utf-8");
+    if (!raw.trim()) return {};
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
 }
 
 function save(data) {
-  fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
+  const tmp = DATA_PATH + ".tmp." + process.pid;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+    fs.renameSync(tmp, DATA_PATH);
+  } catch {
+    try { fs.unlinkSync(tmp); } catch {}
+  }
 }
 
 function getProfile(profileId) {

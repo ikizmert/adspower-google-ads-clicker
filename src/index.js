@@ -109,15 +109,29 @@ async function runSession(profile, parsedQueries) {
   if (config.capsolver_api_key) {
     try {
       const targets = await browser.targets();
-      const capsolverTarget = targets.find((t) =>
-        t.type() === "service_worker" && t.url().includes("pgojnojmmhpofjgdmaebadhbocahppod")
-      );
-      if (capsolverTarget) {
-        const worker = await capsolverTarget.worker();
-        await worker.evaluate((key) => {
-          const cfg = { apiKey: key, enabledForRecaptchaV2: true, enabledForRecaptchaV3: true, enabledForHCaptcha: true, enabledForImageToText: true };
-          chrome.storage.local.set({ config: cfg, defaultConfig: cfg });
-        }, config.capsolver_api_key);
+      // Tüm extension service worker'larını dene — ID her bilgisayarda farklı olabilir
+      for (const t of targets) {
+        if (t.type() !== "service_worker") continue;
+        try {
+          const worker = await t.worker();
+          const hasConfig = await worker.evaluate(() => {
+            return typeof chrome !== "undefined" && chrome.storage && chrome.storage.local;
+          }).catch(() => false);
+          if (!hasConfig) continue;
+          // CapSolver mi kontrol et — config key'i var mı
+          const isCapSolver = await worker.evaluate(() => {
+            return new Promise((resolve) => {
+              chrome.storage.local.get("config", (d) => resolve(d.config && "apiKey" in d.config));
+            });
+          }).catch(() => false);
+          if (isCapSolver || t.url().includes("capsolver") || t.url().includes("pgojnojmmhpofjgdmaebadhbocahppod")) {
+            await worker.evaluate((key) => {
+              const cfg = { apiKey: key, enabledForRecaptchaV2: true, enabledForRecaptchaV3: true, enabledForHCaptcha: true, enabledForImageToText: true };
+              chrome.storage.local.set({ config: cfg, defaultConfig: cfg });
+            }, config.capsolver_api_key);
+            break;
+          }
+        } catch {}
       }
     } catch {}
   }

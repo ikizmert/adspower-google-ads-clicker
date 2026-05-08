@@ -12,3 +12,6 @@ rankings.json
 # Kullanıcı yapılandırması (proxy şifre, query'ler — paylaşılmaz)
 config.json
 queries.txt
+
+# Screenshots
+screenshots/

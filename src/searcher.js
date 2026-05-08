@@ -2,6 +2,20 @@ const { config } = require("./config");
 const { logRanking, logNotFound } = require("./ranking-logger");
 const clickCounter = require("./click-counter");
 const { recordAd, recordHit } = require("./stats");
+const fs = require("fs");
+const path = require("path");
+
+async function takeScreenshot(page, domain, tag = "") {
+  try {
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
+    const dir = path.join(__dirname, "..", "screenshots", domain.replace(/[^a-zA-Z0-9.-]/g, "_"));
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const filePath = path.join(dir, `${dateStr}.png`);
+    await page.screenshot({ path: filePath, fullPage: false });
+    console.log(`${tag}📸 Screenshot: ${domain}/${dateStr}.png`);
+  } catch {}
+}
 
 const GOOGLE_URL = "https://www.google.com";
 
@@ -474,6 +488,7 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
             try { clickCounter.record(ad.domain, "ads"); } catch {}
             const tabUrl = (() => { try { return newTab.url(); } catch { return "?"; } })();
             console.log(`${tag}✓ Reklam tıklandı: ${ad.domain} (${sessionAdClicks[ad.domain]}/${maxAdClicksPerDomain}) → ${tabUrl}`);
+            if (config.behavior.screenshot_on_click) await takeScreenshot(newTab, ad.domain, tag);
             try { await browseAdPage(newTab, tag); } catch {}
             try { await newTab.close(); } catch {}
             await randomSleep(1, 2);
@@ -507,6 +522,7 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
           try { clickCounter.record(hit.domain, "hits"); } catch {}
           const tabUrl = (() => { try { return newTab.url(); } catch { return "?"; } })();
           console.log(`${tag}✓ Organik tıklandı: ${hit.domain} → ${tabUrl}`);
+          if (config.behavior.screenshot_on_click) await takeScreenshot(newTab, hit.domain, tag);
           try { logRanking({ query, domain: hit.domain, page: pg, position: globalPosition, clicked: true }); } catch {}
           try { await browseAdPage(newTab, tag); } catch {}
           // Organik sekmesi session sonuna kadar açık kalır

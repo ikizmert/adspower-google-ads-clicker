@@ -24,6 +24,7 @@
     "ad_page_min_wait": 10,
     "ad_page_max_wait": 15,
     "check_shopping_ads": true,
+    "screenshot_on_click": true,
     "wait_factor": 1.0
   }
 }

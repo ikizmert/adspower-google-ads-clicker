@@ -107,10 +107,6 @@ async function runSession(profile, parsedQueries) {
 
   await closeExtraTabs(browser);
 
-  if (config.behavior.new_session_clear_google_cookies) {
-    await clearGoogleCookies(browser);
-  }
-
   // Passive mod
   if (process.argv.includes("--passive")) {
     console.log(`[${sessionLabel}] PASSIVE MODE — manuel arama yap, Ctrl+C ile çık`);
@@ -169,6 +165,11 @@ async function runSession(profile, parsedQueries) {
     const wait = (5 + Math.random() * 10) * config.behavior.wait_factor;
     console.log(`[${sessionLabel}] ${wait.toFixed(1)}s bekleniyor...\n`);
     await sleep(wait * 1000);
+  }
+
+  // Session bitti — cookie temizle (sonraki açılışta temiz başlasın)
+  if (config.behavior.new_session_clear_google_cookies) {
+    try { await clearGoogleCookies(browser); } catch {}
   }
 
   try {

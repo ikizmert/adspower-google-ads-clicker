@@ -56,28 +56,42 @@ async function isCaptchaPage(page) {
   }
 }
 
-async function solveCaptcha(page, tag = "") {
-  console.log(`${tag}🔓 Extension'ın captcha çözmesi bekleniyor (max 20sn)...`);
+// Captcha queue — aynı anda sadece 1 captcha çözülsün (bringToFront çakışmasın)
+let captchaQueue = Promise.resolve();
 
-  try { await page.bringToFront(); } catch {}
+async function solveCaptcha(page, tag = "") {
+  console.log(`${tag}🔓 Captcha sıraya alındı...`);
+
+  const prev = captchaQueue;
+  let release;
+  captchaQueue = new Promise((r) => { release = r; });
+
+  // Önceki captcha bitene kadar bekle
+  await prev;
 
   try {
-    await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
-    await sleep(3000);
-  } catch {}
-
-  for (let i = 0; i < 7; i++) {
-    await sleep(2500);
+    console.log(`${tag}🔓 Sıra geldi — extension bekleniyor (max 25sn)...`);
+    try { await page.bringToFront(); } catch {}
     try {
-      const url = page.url();
-      if (!url.includes("/sorry") && !url.includes("captcha")) {
-        console.log(`${tag}✓ Captcha çözüldü! → ${url}`);
-        return true;
-      }
-    } catch { break; }
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
+      await sleep(3000);
+    } catch {}
+
+    for (let i = 0; i < 9; i++) {
+      await sleep(2500);
+      try {
+        const url = page.url();
+        if (!url.includes("/sorry") && !url.includes("captcha")) {
+          console.log(`${tag}✓ Captcha çözüldü! → ${url}`);
+          return true;
+        }
+      } catch { break; }
+    }
+    console.log(`${tag}✗ Extension captcha çözemedi (25sn)`);
+    return false;
+  } finally {
+    release();
   }
-  console.log(`${tag}✗ Extension captcha çözemedi (20sn)`);
-  return false;
 }
 
 async function sessionWarmup(page, tag = "") {

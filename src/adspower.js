@@ -82,6 +82,36 @@ function randomSid() {
 }
 
 async function applyStickyProxy(profileId) {
+  const sid = randomSid();
+  const proxyConfig = config.proxy;
+
+  // Config'de proxy varsa direkt oradan al
+  if (proxyConfig && proxyConfig.host) {
+    const user = `${proxyConfig.base_user}_session-${sid}_life-30`;
+    const updateUrl = `${API}/api/v1/user/update`;
+    const updateRes = await fetch(updateUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: profileId,
+        user_proxy_config: {
+          proxy_soft: "other",
+          proxy_type: proxyConfig.type || "http",
+          proxy_host: proxyConfig.host,
+          proxy_port: proxyConfig.port,
+          proxy_user: user,
+          proxy_password: proxyConfig.password,
+        },
+      }),
+    });
+    const updateData = await updateRes.json();
+    if (updateData.code === 0) {
+      console.log(`  Sticky proxy: sid=${sid} (30dk)`);
+    }
+    return;
+  }
+
+  // Config'de proxy yoksa profildeki mevcut proxy'yi güncelle
   const infoUrl = `${API}/api/v1/user/list?user_id=${profileId}`;
   const infoRes = await fetch(infoUrl);
   const infoData = await infoRes.json();
@@ -90,21 +120,14 @@ async function applyStickyProxy(profileId) {
   const proxy = infoData.data.list[0].user_proxy_config;
   if (!proxy || !proxy.proxy_user) return;
 
-  const sid = randomSid();
   let user = proxy.proxy_user;
-
-  // Aproxy format: _session-XXX_life-N
   if (user.includes("_session-") || user.includes("ap-")) {
     user = user.replace(/_session-[^_]+/g, "").replace(/_life-\d+/g, "");
     user = `${user}_session-${sid}_life-30`;
-  }
-  // Weproxy format: -sid-XXX-t-N
-  else if (user.includes("-sid-") || user.includes("kte")) {
+  } else if (user.includes("-sid-") || user.includes("kte")) {
     user = user.replace(/-sid-[^-]+-t-\d+/g, "");
     user = `${user}-sid-${sid}-t-30`;
-  }
-  // Bilinmeyen format: weproxy varsay
-  else {
+  } else {
     user = `${user}-sid-${sid}-t-30`;
   }
 

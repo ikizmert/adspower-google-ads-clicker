@@ -57,9 +57,18 @@ async function isCaptchaPage(page) {
 }
 
 async function solveCaptcha(page, tag = "") {
-  // CapSolver extension browser içinden çözer — sadece bekle
-  console.log(`${tag}🔓 Extension'ın captcha çözmesi bekleniyor (max 60sn)...`);
-  for (let i = 0; i < 20; i++) {
+  console.log(`${tag}🔓 Extension'ın captcha çözmesi bekleniyor (max 45sn)...`);
+
+  // Sayfayı öne getir (extension aktif tab'da çalışır)
+  try { await page.bringToFront(); } catch {}
+
+  // Sayfayı reload et (extension reCAPTCHA widget'ını taze görsün)
+  try {
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
+    await sleep(3000);
+  } catch {}
+
+  for (let i = 0; i < 14; i++) {
     await sleep(3000);
     try {
       const url = page.url();
@@ -69,7 +78,7 @@ async function solveCaptcha(page, tag = "") {
       }
     } catch { break; }
   }
-  console.log(`${tag}✗ Extension captcha çözemedi (60sn)`);
+  console.log(`${tag}✗ Extension captcha çözemedi (45sn)`);
   return false;
 }
 

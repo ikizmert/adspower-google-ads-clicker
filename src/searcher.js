@@ -227,6 +227,7 @@ async function scanPage(page, adDomains, hitDomains) {
     const pcu = await el.evaluate((e) => e.getAttribute("data-pcu") || "");
     const domain = extractDomain(pcu);
     if (domain) allAdDomains.add(domain);
+    if (domain.includes("google.com") || domain.includes("google.")) continue;
     const isHitDomain = hitDomains.some((d) => domain.includes(d));
     if (isHitDomain) continue;
     if (adDomains.length === 0 || adDomains.some((d) => domain.includes(d))) {

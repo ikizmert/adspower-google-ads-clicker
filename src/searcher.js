@@ -491,17 +491,26 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
   if (await isCaptchaPage(page)) {
     console.log(`${tag}⚠ Captcha algılandı — çözülmeye çalışılıyor...`);
     const solved = await solveCaptcha(page, tag);
-    if (solved) {
-      // Captcha çözüldü, arama tekrar yap
+    if (!solved) {
+      return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
+    }
+    // Captcha çözüldü — sayfa arama sonuçlarına yönlendiyse devam et
+    await randomSleep(2, 4);
+    if (!page.url().includes("/search")) {
+      // Hala arama sonuçlarında değilse tekrar ara
+      console.log(`${tag}Captcha sonrası arama tekrarlanıyor...`);
       const retryPage = await doSearch(browser, page, query, tag);
       if (retryPage) {
         page = retryPage;
-        if (await isCaptchaPage(page)) {
-          console.log(`${tag}⚠ Captcha çözümü sonrası hala captcha — session atlanıyor`);
-          return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
-        }
+      } else {
+        return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "search_failed" };
       }
     } else {
+      console.log(`${tag}✓ Captcha çözüldü, arama sonuçlarında devam`);
+    }
+    // Son kontrol
+    if (await isCaptchaPage(page)) {
+      console.log(`${tag}⚠ Captcha çözümü sonrası hala captcha — session atlanıyor`);
       return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
     }
   }

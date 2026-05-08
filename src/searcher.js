@@ -507,6 +507,15 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
         const domainCount = sessionAdClicks[ad.domain] || 0;
         if (domainCount >= maxAdClicksPerDomain) continue;
         try {
+          // Tıklamadan önce screenshot (mouse reklam üstünde)
+          if (config.behavior.screenshot_on_click) {
+            try {
+              await ad.element.scrollIntoView().catch(() => {});
+              const box = await ad.element.boundingBox().catch(() => null);
+              if (box) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
+            } catch {}
+            await takeScreenshot(page, ad.domain, tag);
+          }
           const newTab = await clickInNewTab(browser, page, ad.element);
           if (newTab) {
             adClicked++;
@@ -515,7 +524,6 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
             try { clickCounter.record(ad.domain, "ads"); } catch {}
             const tabUrl = (() => { try { return newTab.url(); } catch { return "?"; } })();
             console.log(`${tag}✓ Reklam tıklandı: ${ad.domain} (${sessionAdClicks[ad.domain]}/${maxAdClicksPerDomain}) → ${tabUrl}`);
-            if (config.behavior.screenshot_on_click) await takeScreenshot(newTab, ad.domain, tag);
             try { await browseAdPage(newTab, tag); } catch {}
             try { await newTab.close(); } catch {}
             await randomSleep(1, 2);
@@ -541,6 +549,15 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
       }
 
       try {
+        // Tıklamadan önce screenshot
+        if (config.behavior.screenshot_on_click) {
+          try {
+            await hit.element.scrollIntoView().catch(() => {});
+            const box = await hit.element.boundingBox().catch(() => null);
+            if (box) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
+          } catch {}
+          await takeScreenshot(page, hit.domain, tag);
+        }
         const newTab = await clickInNewTab(browser, page, hit.element);
         if (newTab) {
           clickedHitDomains.add(hit.matchedHit);
@@ -549,7 +566,6 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
           try { clickCounter.record(hit.domain, "hits"); } catch {}
           const tabUrl = (() => { try { return newTab.url(); } catch { return "?"; } })();
           console.log(`${tag}✓ Organik tıklandı: ${hit.domain} → ${tabUrl}`);
-          if (config.behavior.screenshot_on_click) await takeScreenshot(newTab, hit.domain, tag);
           try { logRanking({ query, domain: hit.domain, page: pg, position: globalPosition, clicked: true }); } catch {}
           try { await browseAdPage(newTab, tag); } catch {}
           // Organik sekmesi session sonuna kadar açık kalır

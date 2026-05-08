@@ -1,0 +1,26 @@
+{
+  "adspower": {
+    "api_url": "http://local.adspower.net:50325",
+    "pilot_profile_id": ""
+  },
+  "proxy": {
+    "type": "http",
+    "host": "",
+    "port": "",
+    "base_user": "",
+    "password": ""
+  },
+  "behavior": {
+    "max_run": 0,
+    "max_total_clicks": 0,
+    "idle_timeout_minutes": 5,
+    "browser_count": 5,
+    "headless": false,
+    "block_images": false,
+    "max_clicks_per_domain": 3,
+    "ad_page_min_wait": 10,
+    "ad_page_max_wait": 15,
+    "check_shopping_ads": true,
+    "wait_factor": 1.0
+  }
+}

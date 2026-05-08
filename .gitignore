@@ -8,3 +8,7 @@ pilot-cookies.json
 profiles.json
 clicks.json
 rankings.json
+
+# Kullanıcı yapılandırması (proxy şifre, query'ler — paylaşılmaz)
+config.json
+queries.txt

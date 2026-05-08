@@ -45,9 +45,9 @@ function recordSession(profileId, totalAdsFound) {
   return data[profileId];
 }
 
-function shouldReset(profileId) {
+function shouldReset(profileId, maxSessions = 5) {
   const p = getProfile(profileId);
-  if (p.sessions >= 5) return "max_sessions";
+  if (maxSessions > 0 && p.sessions >= maxSessions) return "max_sessions";
   if (p.no_ads_streak >= 3) return "no_ads";
   return null;
 }

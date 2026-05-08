@@ -59,7 +59,7 @@ function getUsableProfiles(allProfiles) {
 
 async function resetIfNeeded(profiles) {
   for (const p of profiles) {
-    const reason = tracker.shouldReset(p.id);
+    const reason = tracker.shouldReset(p.id, config.behavior.max_sessions_per_profile || 5);
     if (reason) {
       console.log(`Profil "${p.name || p.id}" sıfırlanıyor (sebep: ${reason})...`);
       await clearCache(p.id);
@@ -103,9 +103,10 @@ async function runSession(profile, parsedQueries) {
   }
 
   await closeExtraTabs(browser);
-  // TODO: clearGoogleCookies ve warmup geçici kapalı — captcha testi
-  // await clearGoogleCookies(browser);
-  // await sessionWarmup(page, `[${sessionLabel}] `);
+
+  if (config.behavior.new_session_clear_google_cookies) {
+    await clearGoogleCookies(browser);
+  }
 
   // Passive mod
   if (process.argv.includes("--passive")) {

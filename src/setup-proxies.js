@@ -1,12 +1,11 @@
 const { config } = require("./config");
 const API = config.adspower.api_url;
 
-const PROXY = {
-  host: "gw.aproxy.com",
-  port: "2312",
-  base_user: "ap-fcfvp9r45zxh_area-TR_city-AYDIN_life-5",
-  password: "JEMKLwMO5Sa63ly1",
-};
+const PROXY = config.proxy;
+if (!PROXY) {
+  console.error("config.json'da 'proxy' bölümü yok!");
+  process.exit(1);
+}
 
 const PILOT_ID = config.adspower.pilot_profile_id;
 
@@ -39,7 +38,7 @@ async function main() {
         user_id: p.user_id,
         user_proxy_config: {
           proxy_soft: "other",
-          proxy_type: "http",
+          proxy_type: PROXY.type || "http",
           proxy_host: PROXY.host,
           proxy_port: PROXY.port,
           proxy_user: proxyUser,

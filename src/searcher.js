@@ -311,62 +311,69 @@ async function scanPage(page, adDomains, hitDomains) {
 }
 
 async function clickInNewTab(browser, page, element) {
-  const pagesBefore = (await browser.pages()).length;
+  try {
+    const pagesBefore = (await browser.pages()).length;
 
-  await element.scrollIntoView();
-  await randomSleep(0.4, 0.8);
-  const box = await element.boundingBox();
-  if (!box) return null;
+    await element.scrollIntoView().catch(() => {});
+    await randomSleep(0.4, 0.8);
+    const box = await element.boundingBox().catch(() => null);
+    if (!box) return null;
 
-  const x = box.x + box.width / 2 + (Math.random() * 6 - 3);
-  const y = box.y + box.height / 2 + (Math.random() * 4 - 2);
+    const x = box.x + box.width / 2 + (Math.random() * 6 - 3);
+    const y = box.y + box.height / 2 + (Math.random() * 4 - 2);
 
-  // Mouse'u hedefe doğal hareketle götür
-  await humanMouseMove(page, x, y);
-  await randomSleep(0.2, 0.5);
+    await humanMouseMove(page, x, y).catch(() => {});
+    await randomSleep(0.2, 0.5);
 
-  // Yöntem 1: Cmd/Ctrl + Click (en doğal yöntem)
-  const modifier = process.platform === "darwin" ? "Meta" : "Control";
-  await page.keyboard.down(modifier);
-  await randomSleep(0.05, 0.15);
-  await page.mouse.down({ button: "left" });
-  await sleep(50 + Math.random() * 100);
-  await page.mouse.up({ button: "left" });
-  await randomSleep(0.05, 0.15);
-  await page.keyboard.up(modifier);
+    // Yöntem 1: Cmd/Ctrl + Click
+    const modifier = process.platform === "darwin" ? "Meta" : "Control";
+    try {
+      await page.keyboard.down(modifier);
+      await randomSleep(0.05, 0.15);
+      await page.mouse.down({ button: "left" });
+      await sleep(50 + Math.random() * 100);
+      await page.mouse.up({ button: "left" });
+      await randomSleep(0.05, 0.15);
+      await page.keyboard.up(modifier);
+    } catch {}
 
-  await sleep(2500);
-  let allPages = await browser.pages();
-  if (allPages.length > pagesBefore) {
-    const newTab = allPages[allPages.length - 1];
-    // bringToFront kaldırıldı — kullanıcının window'u focus kaybetmesin
-    await newTab.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
-    return newTab;
+    await sleep(2500);
+    let allPages = await browser.pages().catch(() => []);
+    if (allPages.length > pagesBefore) {
+      const newTab = allPages[allPages.length - 1];
+      await newTab.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+      return newTab;
+    }
+
+    // Yöntem 2: Middle click
+    try {
+      await humanMouseMove(page, x, y);
+      await randomSleep(0.2, 0.4);
+      await page.mouse.click(x, y, { button: "middle" });
+    } catch {}
+
+    await sleep(2000);
+    allPages = await browser.pages().catch(() => []);
+    if (allPages.length > pagesBefore) {
+      const newTab = allPages[allPages.length - 1];
+      await newTab.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+      return newTab;
+    }
+
+    // Yöntem 3: JS ile yeni tab
+    const href = await element.evaluate((el) => el.href || el.closest("a")?.href || "").catch(() => "");
+    if (href && !href.startsWith("javascript")) {
+      const newTab = await browser.newPage().catch(() => null);
+      if (newTab) {
+        await newTab.goto(href, { waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
+        return newTab;
+      }
+    }
+
+    return null;
+  } catch (e) {
+    return null;
   }
-
-  // Yöntem 2: Middle click
-  await humanMouseMove(page, x, y);
-  await randomSleep(0.2, 0.4);
-  await page.mouse.click(x, y, { button: "middle" });
-
-  await sleep(2000);
-  allPages = await browser.pages();
-  if (allPages.length > pagesBefore) {
-    const newTab = allPages[allPages.length - 1];
-    // bringToFront kaldırıldı — kullanıcının window'u focus kaybetmesin
-    await newTab.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
-    return newTab;
-  }
-
-  // Yöntem 3: JS ile yeni tab
-  const href = await element.evaluate((el) => el.href || el.closest("a")?.href || "");
-  if (href && !href.startsWith("javascript")) {
-    const newTab = await browser.newPage();
-    await newTab.goto(href, { waitUntil: "domcontentloaded", timeout: 15000 });
-    return newTab;
-  }
-
-  return null;
 }
 
 async function searchAndClick(browser, query, adDomains, hitDomains, label = "", sessionAdClicks = {}) {
@@ -516,19 +523,20 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
 }
 
 async function humanMouseMove(page, targetX, targetY) {
-  const start = await page.evaluate(() => ({ x: 0, y: 0 }));
-  const steps = 8 + Math.floor(Math.random() * 12);
-  for (let i = 1; i <= steps; i++) {
-    const t = i / steps;
-    const ease = t * t * (3 - 2 * t);
-    const jitterX = (Math.random() - 0.5) * 6;
-    const jitterY = (Math.random() - 0.5) * 4;
-    const x = start.x + (targetX - start.x) * ease + jitterX;
-    const y = start.y + (targetY - start.y) * ease + jitterY;
-    await page.mouse.move(x, y);
-    await sleep(15 + Math.random() * 30);
-  }
-  await page.mouse.move(targetX, targetY);
+  try {
+    const steps = 8 + Math.floor(Math.random() * 12);
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const ease = t * t * (3 - 2 * t);
+      const jitterX = (Math.random() - 0.5) * 6;
+      const jitterY = (Math.random() - 0.5) * 4;
+      const x = targetX * ease + jitterX;
+      const y = targetY * ease + jitterY;
+      await page.mouse.move(x, y).catch(() => {});
+      await sleep(15 + Math.random() * 30);
+    }
+    await page.mouse.move(targetX, targetY).catch(() => {});
+  } catch {}
 }
 
 async function browseAdPage(page, tag = "") {

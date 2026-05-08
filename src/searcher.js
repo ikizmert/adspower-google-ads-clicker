@@ -585,7 +585,7 @@ async function browseAdPage(page, tag = "") {
   const minWait = config.behavior.ad_page_min_wait;
   const maxWait = config.behavior.ad_page_max_wait;
   const totalTime = (minWait + Math.random() * (maxWait - minWait)) * 1000;
-  const HARD_TIMEOUT = totalTime + 30000; // ekstra 30s tolerans
+  const HARD_TIMEOUT = totalTime + 10000; // ekstra 10s tolerans
   const startTime = Date.now();
 
   // Page evaluate'lere timeout ile sarmal — askıda kalmasın

@@ -43,162 +43,20 @@ async function isCaptchaPage(page) {
 }
 
 async function solveCaptcha(page, tag = "") {
-  const apiKey = config.capsolver_api_key;
-  if (!apiKey) {
-    console.log(`${tag}⚠ CapSolver API key yok, captcha çözülemez`);
-    return false;
-  }
-
-  try {
-    // Sayfadaki reCAPTCHA sitekey'i bul
-    const siteKey = await page.evaluate(() => {
-      const el = document.querySelector("[data-sitekey], .g-recaptcha");
-      return el ? el.getAttribute("data-sitekey") : null;
-    }).catch(() => null);
-
-    if (!siteKey) {
-      console.log(`${tag}⚠ reCAPTCHA sitekey bulunamadı`);
-      return false;
-    }
-
-    const pageUrl = page.url();
-    console.log(`${tag}🔓 Captcha çözülüyor (CapSolver)...`);
-
-    // Enterprise mi standart mı tespit et
-    const isEnterprise = await page.evaluate(() => {
-      const scripts = [...document.querySelectorAll("script[src]")];
-      return scripts.some((s) => s.src.includes("enterprise")) ||
-        !!document.querySelector("[data-enterprise]") ||
-        document.location.hostname.includes("google");
-    }).catch(() => true);
-
-    const taskType = isEnterprise ? "ReCaptchaV2EnterpriseTaskProxyLess" : "ReCaptchaV2TaskProxyLess";
-    console.log(`${tag}  Task: ${taskType}, siteKey: ${siteKey.substring(0, 10)}...`);
-
-    // CapSolver task oluştur
-    const createRes = await fetch("https://api.capsolver.com/createTask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        clientKey: apiKey,
-        task: {
-          type: taskType,
-          websiteURL: pageUrl,
-          websiteKey: siteKey,
-        },
-      }),
-    });
-    const createData = await createRes.json();
-    if (createData.errorId) {
-      console.log(`${tag}✗ CapSolver hata: ${createData.errorDescription || createData.errorCode}`);
-      return false;
-    }
-
-    const taskId = createData.taskId;
-
-    // Sonucu bekle (max 120sn)
-    for (let i = 0; i < 40; i++) {
-      await sleep(3000);
-      const resultRes = await fetch("https://api.capsolver.com/getTaskResult", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ clientKey: apiKey, taskId }),
-      });
-      const resultData = await resultRes.json();
-
-      if (resultData.status === "ready") {
-        const token = resultData.solution && resultData.solution.gRecaptchaResponse;
-        if (!token) {
-          console.log(`${tag}✗ CapSolver token boş`);
-          return false;
-        }
-
-        // Token'ı sayfaya inject et
-        await page.evaluate((t) => {
-          // g-recaptcha-response textarea'larına token yaz
-          document.querySelectorAll("#g-recaptcha-response, [name='g-recaptcha-response'], textarea[id*='recaptcha']").forEach((el) => {
-            el.value = t;
-            el.style.display = "block";
-          });
-          // reCAPTCHA callback'i çağır
-          try {
-            const cb = window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients;
-            if (cb) {
-              Object.values(cb).forEach((c) => {
-                try {
-                  Object.values(c).forEach((v) => {
-                    if (v && typeof v === "object") {
-                      Object.values(v).forEach((w) => {
-                        if (w && w.callback) w.callback(t);
-                      });
-                    }
-                  });
-                } catch {}
-              });
-            }
-          } catch {}
-        }, token).catch(() => {});
-
-        await sleep(1000);
-
-        // Debug: sayfadaki form ve button'ları logla
-        const formDebug = await page.evaluate(() => {
-          const forms = document.querySelectorAll("form");
-          const buttons = document.querySelectorAll("input[type=submit], button[type=submit], button, input[type=button]");
-          const recaptchaInputs = document.querySelectorAll("[name='g-recaptcha-response'], #g-recaptcha-response");
-          return {
-            formCount: forms.length,
-            formAction: forms[0] ? forms[0].action : "yok",
-            formId: forms[0] ? forms[0].id : "yok",
-            buttonCount: buttons.length,
-            buttons: [...buttons].map((b) => `${b.tagName}#${b.id}.${b.className}[${b.type}]="${b.value || b.textContent}"`).slice(0, 5),
-            recaptchaInputCount: recaptchaInputs.length,
-            recaptchaValue: recaptchaInputs[0] ? recaptchaInputs[0].value.substring(0, 20) + "..." : "yok",
-          };
-        }).catch(() => ({ error: "evaluate failed" }));
-        console.log(`${tag}  Debug: ${JSON.stringify(formDebug)}`);
-
-        // Submit: tüm olası button/form yollarını dene
-        try {
-          const submitBtn = await page.$('#recaptcha-submit, input[type="submit"], button[type="submit"], #submit, .submit, #recaptcha-verify-button, form button, form input[value]');
-          if (submitBtn) {
-            console.log(`${tag}  Submit button bulundu, tıklanıyor...`);
-            await Promise.all([
-              page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }),
-              submitBtn.click(),
-            ]).catch(() => {});
-          } else {
-            console.log(`${tag}  Submit button yok, form.submit() deneniyor...`);
-            await Promise.all([
-              page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }),
-              page.evaluate(() => { const f = document.querySelector("form"); if (f) f.submit(); }),
-            ]).catch(() => {});
-          }
-        } catch {}
-
-        await sleep(2000);
-        const urlAfter = page.url();
-        const reallyFixed = !urlAfter.includes("/sorry") && !urlAfter.includes("captcha");
-        if (reallyFixed) {
-          console.log(`${tag}✓ Captcha çözüldü! → ${urlAfter}`);
-          return true;
-        }
-        console.log(`${tag}⚠ Token inject edildi ama sayfa değişmedi (${urlAfter})`);
-        return false;
+  // CapSolver extension browser içinden çözer — sadece bekle
+  console.log(`${tag}🔓 Extension'ın captcha çözmesi bekleniyor (max 60sn)...`);
+  for (let i = 0; i < 20; i++) {
+    await sleep(3000);
+    try {
+      const url = page.url();
+      if (!url.includes("/sorry") && !url.includes("captcha")) {
+        console.log(`${tag}✓ Captcha çözüldü! → ${url}`);
+        return true;
       }
-
-      if (resultData.status === "failed") {
-        console.log(`${tag}✗ CapSolver çözemedi: ${resultData.errorDescription || "bilinmeyen"}`);
-        return false;
-      }
-    }
-
-    console.log(`${tag}✗ CapSolver timeout (120sn)`);
-    return false;
-  } catch (e) {
-    console.log(`${tag}✗ CapSolver hatası: ${e.message.split("\n")[0]}`);
-    return false;
+    } catch { break; }
   }
+  console.log(`${tag}✗ Extension captcha çözemedi (60sn)`);
+  return false;
 }
 
 async function sessionWarmup(page, tag = "") {

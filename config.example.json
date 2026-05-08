@@ -3,6 +3,7 @@
     "api_url": "http://local.adspower.net:50325",
     "pilot_profile_id": ""
   },
+  "capsolver_api_key": "",
   "proxy": {
     "type": "http",
     "host": "",

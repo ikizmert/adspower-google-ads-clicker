@@ -42,6 +42,103 @@ async function isCaptchaPage(page) {
   }
 }
 
+async function solveCaptcha(page, tag = "") {
+  const apiKey = config.capsolver_api_key;
+  if (!apiKey) {
+    console.log(`${tag}⚠ CapSolver API key yok, captcha çözülemez`);
+    return false;
+  }
+
+  try {
+    // Sayfadaki reCAPTCHA sitekey'i bul
+    const siteKey = await page.evaluate(() => {
+      const el = document.querySelector("[data-sitekey], .g-recaptcha");
+      return el ? el.getAttribute("data-sitekey") : null;
+    }).catch(() => null);
+
+    if (!siteKey) {
+      console.log(`${tag}⚠ reCAPTCHA sitekey bulunamadı`);
+      return false;
+    }
+
+    const pageUrl = page.url();
+    console.log(`${tag}🔓 Captcha çözülüyor (CapSolver)...`);
+
+    // CapSolver task oluştur
+    const createRes = await fetch("https://api.capsolver.com/createTask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientKey: apiKey,
+        task: {
+          type: "ReCaptchaV2TaskProxyLess",
+          websiteURL: pageUrl,
+          websiteKey: siteKey,
+        },
+      }),
+    });
+    const createData = await createRes.json();
+    if (createData.errorId) {
+      console.log(`${tag}✗ CapSolver hata: ${createData.errorDescription || createData.errorCode}`);
+      return false;
+    }
+
+    const taskId = createData.taskId;
+
+    // Sonucu bekle (max 120sn)
+    for (let i = 0; i < 40; i++) {
+      await sleep(3000);
+      const resultRes = await fetch("https://api.capsolver.com/getTaskResult", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ clientKey: apiKey, taskId }),
+      });
+      const resultData = await resultRes.json();
+
+      if (resultData.status === "ready") {
+        const token = resultData.solution && resultData.solution.gRecaptchaResponse;
+        if (!token) {
+          console.log(`${tag}✗ CapSolver token boş`);
+          return false;
+        }
+
+        // Token'ı sayfaya inject et
+        await page.evaluate((t) => {
+          const el = document.getElementById("g-recaptcha-response");
+          if (el) { el.value = t; el.style.display = "block"; }
+          const cb = window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients;
+          if (cb) {
+            Object.values(cb).forEach((c) => {
+              try { Object.values(c).forEach((v) => { if (v && v.callback) v.callback(t); }); } catch {}
+            });
+          }
+        }, token).catch(() => {});
+
+        // Submit formu
+        await page.evaluate(() => {
+          const form = document.querySelector("form");
+          if (form) form.submit();
+        }).catch(() => {});
+
+        await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
+        console.log(`${tag}✓ Captcha çözüldü!`);
+        return true;
+      }
+
+      if (resultData.status === "failed") {
+        console.log(`${tag}✗ CapSolver çözemedi: ${resultData.errorDescription || "bilinmeyen"}`);
+        return false;
+      }
+    }
+
+    console.log(`${tag}✗ CapSolver timeout (120sn)`);
+    return false;
+  } catch (e) {
+    console.log(`${tag}✗ CapSolver hatası: ${e.message.split("\n")[0]}`);
+    return false;
+  }
+}
+
 async function sessionWarmup(page, tag = "") {
   console.log(`${tag}🔥 Warmup başlıyor...`);
 
@@ -390,10 +487,23 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
   page = searchResult;
   await randomSleep(1, 2);
 
-  // Captcha tespit → session atla
+  // Captcha tespit → CapSolver ile çöz, çözülemezse session atla
   if (await isCaptchaPage(page)) {
-    console.log(`${tag}⚠ Captcha algılandı — session atlanıyor`);
-    return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
+    console.log(`${tag}⚠ Captcha algılandı — çözülmeye çalışılıyor...`);
+    const solved = await solveCaptcha(page, tag);
+    if (solved) {
+      // Captcha çözüldü, arama tekrar yap
+      const retryPage = await doSearch(browser, page, query, tag);
+      if (retryPage) {
+        page = retryPage;
+        if (await isCaptchaPage(page)) {
+          console.log(`${tag}⚠ Captcha çözümü sonrası hala captcha — session atlanıyor`);
+          return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
+        }
+      }
+    } else {
+      return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
+    }
   }
 
   let totalAdsOnPage = 0;

@@ -7,6 +7,10 @@ const path = require("path");
 
 async function takeScreenshot(page, domain, tag = "") {
   try {
+    // Sayfanın yüklenmesini bekle
+    await sleep(2000);
+    await page.waitForSelector("body", { timeout: 5000 }).catch(() => {});
+
     const now = new Date();
     const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
     const dir = path.join(__dirname, "..", "screenshots", domain.replace(/[^a-zA-Z0-9.-]/g, "_"));
@@ -14,7 +18,9 @@ async function takeScreenshot(page, domain, tag = "") {
     const filePath = path.join(dir, `${dateStr}.png`);
     await page.screenshot({ path: filePath, fullPage: false });
     console.log(`${tag}📸 Screenshot: ${domain}/${dateStr}.png`);
-  } catch {}
+  } catch (e) {
+    console.log(`${tag}📸 Screenshot hatası: ${e.message.split("\n")[0]}`);
+  }
 }
 
 const GOOGLE_URL = "https://www.google.com";

@@ -15,14 +15,9 @@ function load() {
 }
 
 function save(data) {
-  // Atomic write: önce temp dosyaya yaz, sonra rename
-  const tmp = DATA_PATH + ".tmp." + process.pid;
   try {
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-    fs.renameSync(tmp, DATA_PATH);
-  } catch {
-    try { fs.unlinkSync(tmp); } catch {}
-  }
+    fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
+  } catch {}
 }
 
 function record(domain, type) {

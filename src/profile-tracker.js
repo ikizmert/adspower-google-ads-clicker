@@ -15,13 +15,9 @@ function load() {
 }
 
 function save(data) {
-  const tmp = DATA_PATH + ".tmp." + process.pid;
   try {
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-    fs.renameSync(tmp, DATA_PATH);
-  } catch {
-    try { fs.unlinkSync(tmp); } catch {}
-  }
+    fs.writeFileSync(DATA_PATH, JSON.stringify(data, null, 2));
+  } catch {}
 }
 
 function getProfile(profileId) {

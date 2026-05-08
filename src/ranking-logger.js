@@ -16,13 +16,9 @@ function load() {
 }
 
 function save(data) {
-  const tmp = LOG_PATH + ".tmp." + process.pid;
   try {
-    fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
-    fs.renameSync(tmp, LOG_PATH);
-  } catch {
-    try { fs.unlinkSync(tmp); } catch {}
-  }
+    fs.writeFileSync(LOG_PATH, JSON.stringify(data, null, 2));
+  } catch {}
 }
 
 function logRanking({ query, domain, page, position, clicked, timestamp }) {

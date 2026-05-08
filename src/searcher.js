@@ -430,11 +430,12 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
           if (newTab) {
             adClicked++;
             sessionAdClicks[ad.domain] = domainCount + 1;
-            recordAd(ad.domain);
-            clickCounter.record(ad.domain, "ads");
-            console.log(`${tag}✓ Reklam tıklandı: ${ad.domain} (${sessionAdClicks[ad.domain]}/${maxAdClicksPerDomain}) → ${newTab.url()}`);
-            await browseAdPage(newTab, tag);
-            await newTab.close();
+            try { recordAd(ad.domain); } catch {}
+            try { clickCounter.record(ad.domain, "ads"); } catch {}
+            const tabUrl = (() => { try { return newTab.url(); } catch { return "?"; } })();
+            console.log(`${tag}✓ Reklam tıklandı: ${ad.domain} (${sessionAdClicks[ad.domain]}/${maxAdClicksPerDomain}) → ${tabUrl}`);
+            try { await browseAdPage(newTab, tag); } catch {}
+            try { await newTab.close(); } catch {}
             await randomSleep(1, 2);
           } else {
             console.log(`${tag}✗ Reklam yeni sekmede açılamadı: ${ad.domain}`);
@@ -462,21 +463,22 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
         if (newTab) {
           clickedHitDomains.add(hit.matchedHit);
           hitClicked++;
-          recordHit(hit.domain);
-          clickCounter.record(hit.domain, "hits");
-          console.log(`${tag}✓ Organik tıklandı: ${hit.domain} → ${newTab.url()}`);
-          logRanking({ query, domain: hit.domain, page: pg, position: globalPosition, clicked: true });
-          await browseAdPage(newTab, tag);
+          try { recordHit(hit.domain); } catch {}
+          try { clickCounter.record(hit.domain, "hits"); } catch {}
+          const tabUrl = (() => { try { return newTab.url(); } catch { return "?"; } })();
+          console.log(`${tag}✓ Organik tıklandı: ${hit.domain} → ${tabUrl}`);
+          try { logRanking({ query, domain: hit.domain, page: pg, position: globalPosition, clicked: true }); } catch {}
+          try { await browseAdPage(newTab, tag); } catch {}
           // Organik sekmesi session sonuna kadar açık kalır
           await randomSleep(1, 2);
         } else {
           console.log(`${tag}✗ Yeni sekmede açılamadı: ${hit.domain}`);
-          logRanking({ query, domain: hit.domain, page: pg, position: globalPosition, clicked: false });
+          try { logRanking({ query, domain: hit.domain, page: pg, position: globalPosition, clicked: false }); } catch {}
           clickedHitDomains.add(hit.matchedHit);
         }
       } catch (e) {
         console.log(`${tag}✗ Tıklama hatası: ${e.message.split("\n")[0]}`);
-        logRanking({ query, domain: hit.domain, page: pg, position: globalPosition, clicked: false });
+        try { logRanking({ query, domain: hit.domain, page: pg, position: globalPosition, clicked: false }); } catch {}
         clickedHitDomains.add(hit.matchedHit);
       }
     }

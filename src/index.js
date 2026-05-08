@@ -65,7 +65,8 @@ async function resetIfNeeded(profiles) {
     const reason = tracker.shouldReset(p.id, config.behavior.max_sessions_per_profile || 5);
     if (reason) {
       console.log(`Profil "${p.name || p.id}" sıfırlanıyor (sebep: ${reason})...`);
-      await clearCache(p.id);
+      // clearCache (AdsPower delete-cache) KALDIRILDI — extension storage'ı da siliyordu
+      // Sadece tracker sıfırlanır, cookie temizleme session sonunda clearGoogleCookies ile yapılıyor
       tracker.removeProfile(p.id);
     }
   }

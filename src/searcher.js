@@ -453,7 +453,7 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
     const { ads, organics, totalAds, allAdDomains } = await scanPage(page, adDomains, hitDomains);
     totalAdsOnPage += totalAds;
 
-    const searchAds = pg <= maxAdPages && adDomains.length > 0;
+    const searchAds = pg <= maxAdPages;
     const searchHits = pg <= maxHitPages && hitDomains.some((d) => !clickedHitDomains.has(d));
 
     const adDomainsList = allAdDomains.length > 0 ? ` [${allAdDomains.join(", ")}]` : "";

@@ -104,25 +104,58 @@ async function solveCaptcha(page, tag = "") {
 
         // Token'ı sayfaya inject et
         await page.evaluate((t) => {
-          const el = document.getElementById("g-recaptcha-response");
-          if (el) { el.value = t; el.style.display = "block"; }
-          const cb = window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients;
-          if (cb) {
-            Object.values(cb).forEach((c) => {
-              try { Object.values(c).forEach((v) => { if (v && v.callback) v.callback(t); }); } catch {}
-            });
-          }
+          // g-recaptcha-response textarea'larına token yaz
+          document.querySelectorAll("#g-recaptcha-response, [name='g-recaptcha-response'], textarea[id*='recaptcha']").forEach((el) => {
+            el.value = t;
+            el.style.display = "block";
+          });
+          // reCAPTCHA callback'i çağır
+          try {
+            const cb = window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients;
+            if (cb) {
+              Object.values(cb).forEach((c) => {
+                try {
+                  Object.values(c).forEach((v) => {
+                    if (v && typeof v === "object") {
+                      Object.values(v).forEach((w) => {
+                        if (w && w.callback) w.callback(t);
+                      });
+                    }
+                  });
+                } catch {}
+              });
+            }
+          } catch {}
         }, token).catch(() => {});
 
-        // Submit formu
-        await page.evaluate(() => {
-          const form = document.querySelector("form");
-          if (form) form.submit();
-        }).catch(() => {});
+        await sleep(1000);
 
-        await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }).catch(() => {});
-        console.log(`${tag}✓ Captcha çözüldü!`);
-        return true;
+        // Submit: önce button tıkla, sonra form.submit fallback
+        const urlBefore = page.url();
+        try {
+          const submitBtn = await page.$('input[type="submit"], button[type="submit"], #submit, .submit, #recaptcha-verify-button');
+          if (submitBtn) {
+            await Promise.all([
+              page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }),
+              submitBtn.click(),
+            ]).catch(() => {});
+          } else {
+            await Promise.all([
+              page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }),
+              page.evaluate(() => { const f = document.querySelector("form"); if (f) f.submit(); }),
+            ]).catch(() => {});
+          }
+        } catch {}
+
+        await sleep(2000);
+        const urlAfter = page.url();
+        const reallyFixed = !urlAfter.includes("/sorry") && !urlAfter.includes("captcha");
+        if (reallyFixed) {
+          console.log(`${tag}✓ Captcha çözüldü! → ${urlAfter}`);
+          return true;
+        }
+        console.log(`${tag}⚠ Token inject edildi ama sayfa değişmedi (${urlAfter})`);
+        return false;
       }
 
       if (resultData.status === "failed") {

@@ -17,6 +17,8 @@
     "browser_count": 5,
     "headless": false,
     "block_images": false,
+    "new_session_clear_google_cookies": true,
+    "max_sessions_per_profile": 5,
     "max_clicks_per_domain": 3,
     "ad_page_min_wait": 10,
     "ad_page_max_wait": 15,

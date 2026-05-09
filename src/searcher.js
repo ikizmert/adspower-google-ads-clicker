@@ -657,14 +657,17 @@ async function browseAdPage(page, tag = "") {
       new Promise((resolve) => setTimeout(() => resolve(null), 5000)),
     ]).catch(() => null);
 
+  let scrollCount = 0;
   const browse = async () => {
     await sleep(1500 + Math.random() * 1000);
 
     while (Date.now() - startTime < totalTime) {
       const scrollAmount = 50 + Math.floor(Math.random() * 250);
-      await safeEval((amount) => {
-        if (typeof window !== "undefined") window.scrollBy({ top: amount, behavior: "smooth" });
+      const scrolled = await safeEval((amount) => {
+        if (typeof window !== "undefined") { window.scrollBy({ top: amount, behavior: "smooth" }); return true; }
+        return false;
       }, scrollAmount);
+      if (scrolled) scrollCount++;
 
       if (Math.random() < 0.3) {
         await sleep(2000 + Math.random() * 3000);
@@ -693,7 +696,7 @@ async function browseAdPage(page, tag = "") {
       browse(),
       new Promise((_, reject) => setTimeout(() => reject(new Error("browseAdPage hard timeout")), HARD_TIMEOUT)),
     ]);
-    console.log(`${tag}📄 Sitede ${(totalTime / 1000).toFixed(0)}s gezildi`);
+    console.log(`${tag}📄 Sitede ${(totalTime / 1000).toFixed(0)}s gezildi (${scrollCount} scroll)`);
   } catch (e) {
     console.log(`${tag}⚠ browseAdPage timeout: ${e.message.split("\n")[0]}`);
   }

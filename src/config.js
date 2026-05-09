@@ -2,21 +2,42 @@ const fs = require("fs");
 const path = require("path");
 
 const configPath = path.join(__dirname, "..", "config.json");
-const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-
 const queriesPath = path.join(__dirname, "..", "queries.txt");
-const queries = fs
-  .readFileSync(queriesPath, "utf-8")
-  .split("\n")
-  .map((l) => l.trim())
-  .filter(Boolean);
+
+let config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+let queries = loadQueries();
+
+function loadQueries() {
+  return fs
+    .readFileSync(queriesPath, "utf-8")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+// Config değişince otomatik reload
+fs.watch(configPath, { persistent: false }, () => {
+  try {
+    const raw = fs.readFileSync(configPath, "utf-8");
+    if (!raw.trim()) return;
+    config = JSON.parse(raw);
+    console.log("⚙ config.json yeniden yüklendi");
+  } catch {}
+});
+
+// Queries değişince otomatik reload
+fs.watch(queriesPath, { persistent: false }, () => {
+  try {
+    queries = loadQueries();
+    console.log(`⚙ queries.txt yeniden yüklendi (${queries.length} query)`);
+  } catch {}
+});
 
 function parseQuery(line) {
   let rest = line.trim();
   let adDomains = [];
   let hitDomains = [];
 
-  // ! ile ayrılmış hit domainlerini topla
   const parts = rest.split("!");
   rest = parts[0].trim();
   for (let i = 1; i < parts.length; i++) {
@@ -24,7 +45,6 @@ function parseQuery(line) {
     if (d) hitDomains.push(d);
   }
 
-  // @ ile ayrılmış reklam domainlerini topla
   const adIndex = rest.indexOf("@");
   if (adIndex !== -1) {
     const adPart = rest.substring(adIndex + 1).trim();
@@ -35,4 +55,4 @@ function parseQuery(line) {
   return { search: rest, adDomains, hitDomains };
 }
 
-module.exports = { config, queries, parseQuery };
+module.exports = { get config() { return config; }, get queries() { return queries; }, parseQuery };

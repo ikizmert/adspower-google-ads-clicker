@@ -72,8 +72,18 @@ async function resetIfNeeded(profiles) {
   }
 }
 
+const failedProfiles = new Map(); // profileId -> fail zamanı (5dk cooldown)
+
 function pickProfiles(profiles, count, excludeIds = new Set()) {
-  const available = profiles.filter((p) => !excludeIds.has(p.id));
+  const now = Date.now();
+  const COOLDOWN = 5 * 60 * 1000; // 5dk
+  const available = profiles.filter((p) => {
+    if (excludeIds.has(p.id)) return false;
+    const failTime = failedProfiles && failedProfiles.get(p.id);
+    if (failTime && now - failTime < COOLDOWN) return false;
+    if (failTime && now - failTime >= COOLDOWN) failedProfiles.delete(p.id);
+    return true;
+  });
   const shuffled = [...available];
   for (let i = shuffled.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -315,6 +325,8 @@ async function run() {
         ]);
       } catch (e) {
         console.error(`Session hatası (#${profile.serial || profile.id}): ${e.message.split("\n")[0]} — atlanıyor`);
+        // Profili 5dk cooldown'a al (sonsuz retry önle)
+        failedProfiles.set(profile.id, Date.now());
         try { await closeBrowser(profile.id); } catch {}
         return { clicked: 0, hits: 0, adsFound: 0 };
       }

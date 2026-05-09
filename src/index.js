@@ -315,7 +315,8 @@ async function run() {
   }
 
   function launchSession(profile) {
-    console.log(`▶ Session başlıyor: #${profile.serial || profile.id} | aktif: ${active.size + 1}`);
+    if (active.size >= browserCount) return; // Slot kontrolü
+    console.log(`▶ Session başlıyor: #${profile.serial || profile.id} | aktif: ${active.size + 1}/${browserCount}`);
     let cleaned = false;
     const sessionPromise = (async () => {
       try {

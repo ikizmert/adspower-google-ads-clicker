@@ -23,7 +23,7 @@ async function takeScreenshot(page, domain, tag = "") {
   }
 }
 
-const GOOGLE_URL = "https://www.google.com";
+const GOOGLE_URL = "https://www.google.com.tr";
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -245,7 +245,7 @@ async function doSearch(browser, _page, query, tag = "") {
     console.log(`${tag}[!] URL ile arama deneniyor...`);
     const fallback = await browser.newPage();
     await fallback.goto(
-      `${GOOGLE_URL}/search?q=${encodeURIComponent(query)}`,
+      `${GOOGLE_URL}/search?q=${encodeURIComponent(query)}&hl=tr&gl=tr`,
       { waitUntil: "domcontentloaded", timeout: 30000 }
     );
     await randomSleep(1, 2);

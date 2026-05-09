@@ -197,7 +197,10 @@ async function setupImageBlocking(page) {
   await page.setRequestInterception(true).catch(() => {});
   page.on("request", (req) => {
     const type = req.resourceType();
-    if (type === "image" || type === "media" || type === "font") {
+    const url = req.url();
+    // Captcha resimlerini engelleme
+    const isCaptchaResource = url.includes("recaptcha") || url.includes("captcha") || url.includes("gstatic.com");
+    if ((type === "image" || type === "media" || type === "font") && !isCaptchaResource) {
       req.abort().catch(() => {});
     } else {
       req.continue().catch(() => {});

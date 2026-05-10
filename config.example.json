@@ -1,30 +1,49 @@
 {
+  "provider": "adspower",
   "adspower": {
     "api_url": "http://local.adspower.net:50325",
     "pilot_profile_id": ""
   },
   "capsolver_api_key": "",
-  "proxy": {
-    "type": "http",
-    "host": "",
-    "port": "",
-    "base_user": "",
-    "password": ""
+  "proxy_rotation": {
+    "enabled": true,
+    "providers": [
+      {
+        "name": "aproxy",
+        "weight": 70,
+        "type": "http",
+        "host": "gw.aproxy.com",
+        "port": "2312",
+        "base_user": "ap-fcfvp9r45zxh",
+        "password": "",
+        "cities": ["AYDIN", "IZMIR", "MUGLA", "ANTALYA", "ISTANBUL", "BURSA", "ANKARA"]
+      }
+    ]
   },
   "behavior": {
+    "mode": "model_0",
+    "browser_count": 5,
+    "max_clicks_per_domain_per_session": 3,
+    "max_pages_for_ads": 3,
+    "max_pages_for_hits": 5,
+    "ad_page_min_wait": 8,
+    "ad_page_max_wait": 15,
+    "wait_factor": 1.0,
+    "captcha_action": "solve_continue",
+    "captcha_solve_timeout_seconds": 60,
+    "profile_cooldown_minutes": 10,
+    "captcha_failure_cooldown_minutes": 15,
+    "warmup_enabled": false,
+    "filler_queries_per_session": 2,
+    "adaptive_targeting": {
+      "enabled": true,
+      "missed_threshold": 3
+    },
+    "screenshot_on_click": true,
     "max_run": 0,
     "max_total_clicks": 0,
     "idle_timeout_minutes": 5,
-    "browser_count": 5,
-    "headless": false,
-    "block_images": false,
     "new_session_clear_google_cookies": true,
-    "max_sessions_per_profile": 5,
-    "max_clicks_per_domain": 3,
-    "ad_page_min_wait": 10,
-    "ad_page_max_wait": 15,
-    "check_shopping_ads": true,
-    "screenshot_on_click": true,
-    "wait_factor": 1.0
+    "check_shopping_ads": true
   }
 }

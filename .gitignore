@@ -15,3 +15,6 @@ queries.txt
 
 # Screenshots
 screenshots/
+
+# Adaptive tracker runtime state
+budget-state.json

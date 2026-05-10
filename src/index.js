@@ -94,7 +94,7 @@ function pickProfiles(profiles, count, excludeIds = new Set()) {
   return shuffled.slice(0, Math.min(count, shuffled.length));
 }
 
-async function runSession(profile, parsedQueries, tracker) {
+async function runSession(profile, parsedQueries, budgetTracker) {
   const profileId = profile.id;
   const sessionLabel = `#${profile.serial || "?"}`;
   const profileName = profile.name || profileId;
@@ -180,7 +180,7 @@ async function runSession(profile, parsedQueries, tracker) {
     const q = sessionQueries[qi];
     let result;
     try {
-      result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks, tracker);
+      result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks, budgetTracker);
     } catch (e) {
       console.error(`[${sessionLabel}] Query hatası ("${q.search}"): ${e.message.split("\n")[0]} — atlanıyor`);
       continue;
@@ -199,7 +199,7 @@ async function runSession(profile, parsedQueries, tracker) {
           const { wsEndpoint } = await openBrowser(profileId);
           browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
           await closeExtraTabs(browser);
-          result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks, tracker);
+          result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks, budgetTracker);
           if (!needsRetry(result)) break;
         } catch (e) {
           console.log(`[${sessionLabel}] Retry ${retry} başarısız: ${e.message.split("\n")[0]}`);

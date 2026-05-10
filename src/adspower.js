@@ -1,4 +1,5 @@
 const { config } = require("./config");
+const { selectProvider, selectCity, composeProxyUser } = require("./proxy-rotation");
 
 const API = config.adspower.api_url;
 
@@ -83,13 +84,43 @@ function randomSid() {
 
 async function applyStickyProxy(profileId) {
   const sid = randomSid();
-  const proxyConfig = config.proxy;
+  const rotation = config.proxy_rotation;
 
-  // Config'de proxy varsa direkt oradan al
+  // Yeni schema: proxy_rotation.providers
+  if (rotation && rotation.enabled && Array.isArray(rotation.providers) && rotation.providers.length > 0) {
+    const provider = selectProvider(rotation.providers);
+    const city = selectCity(provider);
+    const user = composeProxyUser(provider, city, sid);
+
+    const updateUrl = `${API}/api/v1/user/update`;
+    const updateRes = await fetch(updateUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_id: profileId,
+        user_proxy_config: {
+          proxy_soft: "other",
+          proxy_type: provider.type || "http",
+          proxy_host: provider.host,
+          proxy_port: provider.port,
+          proxy_user: user,
+          proxy_password: provider.password,
+        },
+      }),
+    });
+    const updateData = await updateRes.json();
+    if (updateData.code === 0) {
+      console.log(`  Sticky proxy: ${provider.name} ${city || "TR"} sid=${sid}`);
+    }
+    return;
+  }
+
+  // Eski schema fallback (config.proxy.host varsa)
+  const proxyConfig = config.proxy;
   if (proxyConfig && proxyConfig.host) {
     const user = `${proxyConfig.base_user}_session-${sid}_life-30`;
     const updateUrl = `${API}/api/v1/user/update`;
-    const updateRes = await fetch(updateUrl, {
+    await fetch(updateUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -104,45 +135,7 @@ async function applyStickyProxy(profileId) {
         },
       }),
     });
-    const updateData = await updateRes.json();
-    if (updateData.code === 0) {
-      console.log(`  Sticky proxy: sid=${sid} (30dk)`);
-    }
-    return;
-  }
-
-  // Config'de proxy yoksa profildeki mevcut proxy'yi güncelle
-  const infoUrl = `${API}/api/v1/user/list?user_id=${profileId}`;
-  const infoRes = await fetch(infoUrl);
-  const infoData = await infoRes.json();
-  if (infoData.code !== 0 || !infoData.data.list.length) return;
-
-  const proxy = infoData.data.list[0].user_proxy_config;
-  if (!proxy || !proxy.proxy_user) return;
-
-  let user = proxy.proxy_user;
-  if (user.includes("_session-") || user.includes("ap-")) {
-    user = user.replace(/_session-[^_]+/g, "").replace(/_life-\d+/g, "");
-    user = `${user}_session-${sid}_life-30`;
-  } else if (user.includes("-sid-") || user.includes("kte")) {
-    user = user.replace(/-sid-[^-]+-t-\d+/g, "");
-    user = `${user}-sid-${sid}-t-30`;
-  } else {
-    user = `${user}-sid-${sid}-t-30`;
-  }
-
-  const updateUrl = `${API}/api/v1/user/update`;
-  const updateRes = await fetch(updateUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      user_id: profileId,
-      user_proxy_config: { ...proxy, proxy_user: user },
-    }),
-  });
-  const updateData = await updateRes.json();
-  if (updateData.code === 0) {
-    console.log(`  Sticky proxy: sid=${sid} (30dk)`);
+    console.log(`  Sticky proxy (legacy): sid=${sid} (30dk)`);
   }
 }
 

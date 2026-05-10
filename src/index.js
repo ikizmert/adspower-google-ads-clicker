@@ -74,16 +74,21 @@ async function resetIfNeeded(profiles) {
   }
 }
 
-const failedProfiles = new Map(); // profileId -> fail zamanı (5dk cooldown)
+const failedProfiles = new Map(); // profileId -> { time: ms, failure: bool }
 
 function pickProfiles(profiles, count, excludeIds = new Set()) {
   const now = Date.now();
-  const COOLDOWN = 5 * 60 * 1000; // 5dk
+  const SUCCESS_COOLDOWN = (config.behavior.profile_cooldown_minutes || 10) * 60 * 1000;
+  const FAILURE_COOLDOWN = (config.behavior.captcha_failure_cooldown_minutes || 15) * 60 * 1000;
+
   const available = profiles.filter((p) => {
     if (excludeIds.has(p.id)) return false;
-    const failTime = failedProfiles && failedProfiles.get(p.id);
-    if (failTime && now - failTime < COOLDOWN) return false;
-    if (failTime && now - failTime >= COOLDOWN) failedProfiles.delete(p.id);
+    const fail = failedProfiles.get(p.id);
+    if (fail) {
+      const cooldown = fail.failure ? FAILURE_COOLDOWN : SUCCESS_COOLDOWN;
+      if (now - fail.time < cooldown) return false;
+      failedProfiles.delete(p.id);
+    }
     return true;
   });
   const shuffled = [...available];
@@ -95,6 +100,7 @@ function pickProfiles(profiles, count, excludeIds = new Set()) {
 }
 
 async function runSession(profile, parsedQueries, budgetTracker) {
+  let sessionFailureFlag = false;
   const profileId = profile.id;
   const sessionLabel = `#${profile.serial || "?"}`;
   const profileName = profile.name || profileId;
@@ -156,7 +162,7 @@ async function runSession(profile, parsedQueries, budgetTracker) {
     if (fillerResult.hadCaptcha && !fillerResult.solved) {
       console.log(`[${sessionLabel}] ⚠ Filler captcha çözülemedi → session erken kapatılıyor`);
       try { browser.disconnect(); await closeBrowser(profileId); } catch {}
-      failedProfiles.set(profileId, Date.now());
+      failedProfiles.set(profileId, { time: Date.now(), failure: true });
       stats.completed++;
       stats.totalFailed++;
       return { clicked: 0, hits: 0, adsFound: 0 };
@@ -215,6 +221,8 @@ async function runSession(profile, parsedQueries, budgetTracker) {
     if (needsRetry(result)) {
       const reason = result.error === "bot_detected" ? "captcha" : "bağlantı hatası";
       console.log(`[${sessionLabel}] ⚠ 3 retry sonrası hala ${reason} — session atlanıyor`);
+      failedProfiles.set(profileId, { time: Date.now(), failure: true });
+      sessionFailureFlag = true;
       break;
     }
 
@@ -232,6 +240,11 @@ async function runSession(profile, parsedQueries, budgetTracker) {
     browser.disconnect();
     await closeBrowser(profileId);
   } catch {}
+
+  // Cooldown — failure varsa zaten set edildi, success'i overwrite etme
+  if (!sessionFailureFlag) {
+    failedProfiles.set(profileId, { time: Date.now(), failure: false });
+  }
 
   // Session anında stats'a kaydet (Ctrl+C anında doğru sayım için)
   stats.completed++;
@@ -362,8 +375,8 @@ async function run() {
         ]);
       } catch (e) {
         console.error(`Session hatası (#${profile.serial || profile.id}): ${e.message.split("\n")[0]} — atlanıyor`);
-        // Profili 5dk cooldown'a al (sonsuz retry önle)
-        failedProfiles.set(profile.id, Date.now());
+        // Profili failure cooldown'a al (sonsuz retry önle)
+        failedProfiles.set(profile.id, { time: Date.now(), failure: true });
         try { await closeBrowser(profile.id); } catch {}
         return { clicked: 0, hits: 0, adsFound: 0 };
       }

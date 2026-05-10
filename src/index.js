@@ -8,6 +8,8 @@ const { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies,
 const tracker = require("./profile-tracker");
 const clickCounter = require("./click-counter");
 const { state: stats } = require("./stats");
+const path = require("path");
+const { createTracker } = require("./budget-tracker");
 
 function printSummary() {
   console.log(`\n=== Kampanya tamamlandı ===`);
@@ -92,7 +94,7 @@ function pickProfiles(profiles, count, excludeIds = new Set()) {
   return shuffled.slice(0, Math.min(count, shuffled.length));
 }
 
-async function runSession(profile, parsedQueries) {
+async function runSession(profile, parsedQueries, tracker) {
   const profileId = profile.id;
   const sessionLabel = `#${profile.serial || "?"}`;
   const profileName = profile.name || profileId;
@@ -178,7 +180,7 @@ async function runSession(profile, parsedQueries) {
     const q = sessionQueries[qi];
     let result;
     try {
-      result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks);
+      result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks, tracker);
     } catch (e) {
       console.error(`[${sessionLabel}] Query hatası ("${q.search}"): ${e.message.split("\n")[0]} — atlanıyor`);
       continue;
@@ -197,7 +199,7 @@ async function runSession(profile, parsedQueries) {
           const { wsEndpoint } = await openBrowser(profileId);
           browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
           await closeExtraTabs(browser);
-          result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks);
+          result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks, tracker);
           if (!needsRetry(result)) break;
         } catch (e) {
           console.log(`[${sessionLabel}] Retry ${retry} başarısız: ${e.message.split("\n")[0]}`);
@@ -298,6 +300,13 @@ async function run() {
   const idleTimeoutMs = (config.behavior.idle_timeout_minutes || 0) * 60 * 1000;
   const parsedQueries = queries.map(parseQuery);
 
+  // Budget tracker (adaptive targeting)
+  const adaptive = config.behavior.adaptive_targeting || {};
+  const budgetTracker = adaptive.enabled ? createTracker({
+    stateFile: path.join(__dirname, "..", "budget-state.json"),
+    threshold: adaptive.missed_threshold || 3,
+  }) : null;
+
   const unlimited = !maxRun || maxRun <= 0;
   console.log(`Profil: ${profiles.length} | Paralel: ${browserCount} | Session: ${unlimited ? "sınırsız" : maxRun}` +
     (maxTotalClicks ? ` | Max tıklama: ${maxTotalClicks}` : "") +
@@ -327,6 +336,16 @@ async function run() {
       stats.stopReason = `${config.behavior.idle_timeout_minutes}dk boyunca reklam tıklama yok (${dakika}dk geçti)`;
       return true;
     }
+
+    // Adaptive: tüm target domainler exhausted ise dur
+    if (budgetTracker) {
+      const allTargets = [...new Set(parsedQueries.flatMap((q) => q.adDomains))];
+      if (allTargets.length > 0 && budgetTracker.allTargetsExhausted(allTargets)) {
+        stats.stopReason = "Tüm rakipler bütçelerini bitirdi (adaptive)";
+        return true;
+      }
+    }
+
     if (!unlimited && stats.completed >= maxRun) return true;
     return false;
   }
@@ -338,7 +357,7 @@ async function run() {
     const sessionPromise = (async () => {
       try {
         return await Promise.race([
-          runSession(profile, parsedQueries),
+          runSession(profile, parsedQueries, budgetTracker),
           new Promise((_, reject) => setTimeout(() => reject(new Error("Session timeout (8dk)")), SESSION_TIMEOUT)),
         ]);
       } catch (e) {

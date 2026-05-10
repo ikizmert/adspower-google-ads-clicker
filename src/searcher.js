@@ -501,7 +501,7 @@ async function clickInNewTab(browser, page, element) {
   }
 }
 
-async function searchAndClick(browser, query, adDomains, hitDomains, label = "", sessionAdClicks = {}) {
+async function searchAndClick(browser, query, adDomains, hitDomains, label = "", sessionAdClicks = {}, tracker = null) {
   let page = (await browser.pages())[0] || (await browser.newPage());
   const tag = label ? `[${label}] ` : "  ";
 
@@ -561,6 +561,11 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
     const { ads, organics, totalAds, allAdDomains } = await scanPage(page, adDomains, hitDomains);
     totalAdsOnPage += totalAds;
 
+    // Budget tracker'ı feed et (sadece ad domain'leri için)
+    if (tracker && adDomains.length > 0) {
+      tracker.update(allAdDomains, adDomains);
+    }
+
     const searchAds = pg <= maxAdPages;
     const searchHits = pg <= maxHitPages && hitDomains.some((d) => !clickedHitDomains.has(d));
 
@@ -570,6 +575,11 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
     // Reklamlara tıkla (yeni sekmede) - domain başına max 2-3
     if (searchAds) {
       for (const ad of ads) {
+        // Tracker exhausted ise atla
+        if (tracker && tracker.isExhausted(ad.domain)) {
+          console.log(`${tag}⏭ ${ad.domain} exhausted (gün boyu atla)`);
+          continue;
+        }
         const domainCount = sessionAdClicks[ad.domain] || 0;
         if (domainCount >= maxAdClicksPerDomain) continue;
         try {

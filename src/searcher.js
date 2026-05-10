@@ -21,8 +21,19 @@ function pickRandomQueries(arr, count) {
 
 async function takeScreenshot(page, domain, tag = "") {
   try {
-    // Sayfanın yüklenmesini bekle
+    if (!page || page.isClosed()) {
+      console.log(`${tag}📸 Screenshot iptal: page kapalı (entry)`);
+      return;
+    }
+    const url = page.url();
+    console.log(`${tag}📸 Screenshot çağrıldı: domain=${domain} url=${url.substring(0, 60)}`);
+
     await sleep(2000);
+
+    if (page.isClosed()) {
+      console.log(`${tag}📸 Screenshot iptal: page sleep sonrası kapandı`);
+      return;
+    }
     await page.waitForSelector("body", { timeout: 5000 }).catch(() => {});
 
     const now = new Date();
@@ -31,7 +42,7 @@ async function takeScreenshot(page, domain, tag = "") {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     const filePath = path.join(dir, `${dateStr}.png`);
     await page.screenshot({ path: filePath, fullPage: false });
-    console.log(`${tag}📸 Screenshot: ${domain}/${dateStr}.png`);
+    console.log(`${tag}📸 Screenshot kaydedildi: ${domain}/${dateStr}.png`);
   } catch (e) {
     console.log(`${tag}📸 Screenshot hatası: ${e.message.split("\n")[0]}`);
   }

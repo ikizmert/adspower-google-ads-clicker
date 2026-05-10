@@ -50,7 +50,7 @@
 5. CapSolver extension'a API key inject (mevcut)
 6. FILLER PHASE:
    - 1-2 alakasız Google araması ("hava durumu", "namaz vakitleri" vb.)
-   - **Captcha çıkarsa: SESSION TERK** (filler'da captcha = proxy/IP zaten yanmış, target'ı denemeye gerek yok)
+   - **Captcha çıkarsa: CapSolver çöz (max 60s); çözüldü → devam, çözülemedi → session terk**
    - 1 organik sonuca tıkla, 5-8s gez, kapat
 7. TARGET PHASE — her hedef query için:
    - Yeni tab → google.com → query type → Enter
@@ -213,17 +213,13 @@ Profile picker:
 
 ### 3.7 Captcha Behavior
 
-İki ayrı pencere — filler ve target query'lerinde davranış FARKLI:
+**Filler ve target query'de davranış AYNI:** captcha çıkarsa CapSolver ile çöz, çözülürse devam et.
 
-**Filler phase'de captcha (3.1 adım 6):**
-- Çözmeye uğraşma, **session'ı direkt terk et**
-- Sebep: filler önemsiz; orada captcha tetiklemek "bu IP/proxy zaten yanmış" sinyali
-- Profil 15 dk failure cooldown'a, sonraki session'da yeni IP gelir
-
-**Target query'de captcha (3.1 adım 7):**
-1. CapSolver bekle (timeout **60s** — mevcut 25s yetersizdi)
-2. Çözüldü → session'a devam, target query'lere geç
-3. Çözülemedi → session terk, profil 15 dk failure cooldown'a
+**Akış:**
+1. Captcha algılandı (filler veya target fark etmez)
+2. CapSolver bekle (timeout **60s** — mevcut 25s yetersizdi)
+3. Çözüldü → session'a devam (filler'a, target'a, neredeyse oraya)
+4. Çözülemedi → session terk, profil **15 dk failure cooldown**'a
 
 **Cooldown gerekçesi:** 15 dk seçildi çünkü:
 - Captcha tetiği büyük ihtimal IP/proxy ASN sorunu (fingerprint zaten regenerate)
@@ -267,7 +263,7 @@ Profile picker:
     "wait_factor": 1.0,
     "captcha_action": "solve_continue",
     "captcha_solve_timeout_seconds": 60,
-    "profile_cooldown_minutes": 30,
+    "profile_cooldown_minutes": 10,
     "captcha_failure_cooldown_minutes": 15,
     "warmup_enabled": false,
     "filler_queries_per_session": 2,
@@ -320,7 +316,7 @@ Profile picker:
 
 1. **Proxy ASN flag'i sürerse fingerprint regen yetmez.** İkinci provider aboneliği gerekebilir (kullanıcı onayladı, gerekirse eklenecek).
 2. **Adaptive false positive:** Rakibin reklamı doğal nedenlerle (bid düşük, query mismatch) görünmeyebilir. Threshold 3 ardışık miss makul ama tunable.
-3. **CapSolver gecikmesi:** 25s timeout velocity'yi düşürür. Captcha rate yüksekse hourly throughput azalır.
+3. **CapSolver gecikmesi:** 60s timeout velocity'yi düşürür (önceki 25s yetersizdi, başarı oranını artırmak için uzatıldı). Captcha rate yüksekse hourly throughput azalır.
 4. **AdsPower API rate limit:** `/browser/start` "too many" hatası mevcut retry kodlanmış ama browser_count > 5'te sıkıştırma riski.
 5. **Filler query organik tıklamaları** organik domainlerin tıklama sayısını şişirebilir → sayım dışı bayraklı tutulur.
 6. **Daily date rollover:** `budget-state.json` günde 1 kez sıfırlanır; UTC vs Europe/Istanbul timezone farkı dikkat — config'de explicit timezone.
@@ -352,11 +348,12 @@ Profile picker:
 
 Bu spec **2026-05-11 tarihinde kullanıcı tarafından** aşağıdaki kararlarla onaylandı:
 
-- **Proxy:** B (şehir list rotation) + C (ikinci provider opsiyonu, weight'le primary'den az)
-- **Profile cooldown (success):** 30 dk
+- **Proxy:** B (şehir list rotation) + C (ikinci provider opsiyonu, weight ile primary'den az)
+- **Provider weight default:** primary 70 / secondary 30 (kullanıcı onayı ile)
+- **Profile cooldown (success):** 10 dk (önceki 30 dk fazla; storage temizliği + fingerprint regen ile cooldown sadece operasyonel)
 - **Captcha failure cooldown:** 15 dk (60 yerine)
 - **Captcha solve timeout:** 60 sn (25 yerine)
-- **Captcha davranışı:** target query'de solve_then_continue, filler'da abandon
+- **Captcha davranışı (filler ve target):** solve_then_continue (kullanıcı B seçeneğini seçti — filler'da da çözmeyi dene)
 - **Filler queries:** her session 1-2 alakasız sorgu + 1 organik tıklama
 - **Profile sayısı:** 22 (clone yok şimdilik)
 - **Burst window:** scheduler yok, kullanıcı manuel başlatır

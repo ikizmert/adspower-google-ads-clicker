@@ -557,7 +557,7 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
   let totalAdsOnPage = 0;
   let adClicked = 0;
   let hitClicked = 0;
-  const maxAdClicksPerDomain = config.behavior.max_clicks_per_domain || (2 + Math.floor(Math.random() * 2));
+  const maxAdClicksPerDomain = config.behavior.max_clicks_per_domain_per_session || config.behavior.max_clicks_per_domain || (2 + Math.floor(Math.random() * 2));
   const clickedHitDomains = new Set();
   const loggedHitDomains = new Set();
   const rankings = [];
@@ -816,21 +816,33 @@ function extractDomain(url) {
 }
 
 async function clearAllStorage(browser) {
-  // CDP üzerinden tüm cookie + storage temizle
+  // CDP üzerinden cookie + cache temizle (browser-wide)
+  // localStorage/IndexedDB origin-bazlı, en bilindik Google origin'leri için temizle
   const pages = await browser.pages();
   if (pages.length === 0) return;
   const session = await pages[0].target().createCDPSession();
   try {
-    // Tüm cookie'leri sil (sadece google değil)
+    // Browser-wide: cookies + cache
     await session.send("Network.clearBrowserCookies").catch(() => {});
-    // Cache temizle
     await session.send("Network.clearBrowserCache").catch(() => {});
-    // localStorage / sessionStorage / IndexedDB için Storage.clearDataForOrigin "*"
-    await session.send("Storage.clearDataForOrigin", {
-      origin: "*",
-      storageTypes: "all",
-    }).catch(() => {});
-    console.log(`  ✓ Storage temizlendi (cookies + cache + localStorage + IndexedDB)`);
+
+    // Origin-bazlı: localStorage, sessionStorage, IndexedDB, service workers
+    const origins = [
+      "https://www.google.com",
+      "https://google.com",
+      "https://www.google.com.tr",
+      "https://google.com.tr",
+      "https://accounts.google.com",
+      "https://www.youtube.com",
+      "https://youtube.com",
+    ];
+    for (const origin of origins) {
+      await session.send("Storage.clearDataForOrigin", {
+        origin,
+        storageTypes: "all",
+      }).catch(() => {});
+    }
+    console.log(`  ✓ Storage temizlendi (cookies + cache + ${origins.length} origin localStorage/IndexedDB)`);
   } catch (e) {
     console.log(`  ✗ Storage temizleme hatası: ${e.message.split("\n")[0]}`);
   }

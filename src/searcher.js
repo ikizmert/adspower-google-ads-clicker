@@ -66,6 +66,9 @@ async function isCaptchaPage(page) {
 let captchaQueue = Promise.resolve();
 
 async function solveCaptcha(page, tag = "") {
+  const timeoutSec = (config.behavior && config.behavior.captcha_solve_timeout_seconds) || 60;
+  const iterations = Math.ceil(timeoutSec / 2.5);
+
   console.log(`${tag}🔓 Captcha sıraya alındı...`);
 
   const prev = captchaQueue;
@@ -76,14 +79,14 @@ async function solveCaptcha(page, tag = "") {
   await prev;
 
   try {
-    console.log(`${tag}🔓 Sıra geldi — extension bekleniyor (max 25sn)...`);
+    console.log(`${tag}🔓 Sıra geldi — extension bekleniyor (max ${timeoutSec}sn)...`);
     try { await page.bringToFront(); } catch {}
     try {
       await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
       await sleep(3000);
     } catch {}
 
-    for (let i = 0; i < 9; i++) {
+    for (let i = 0; i < iterations; i++) {
       await sleep(2500);
       try {
         const url = page.url();
@@ -93,7 +96,7 @@ async function solveCaptcha(page, tag = "") {
         }
       } catch { break; }
     }
-    console.log(`${tag}✗ Extension captcha çözemedi (25sn)`);
+    console.log(`${tag}✗ Extension captcha çözemedi (${timeoutSec}sn)`);
     return false;
   } finally {
     release();

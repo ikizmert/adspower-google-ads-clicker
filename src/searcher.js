@@ -734,4 +734,26 @@ function extractDomain(url) {
   }
 }
 
-module.exports = { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, sessionWarmup };
+async function clearAllStorage(browser) {
+  // CDP üzerinden tüm cookie + storage temizle
+  const pages = await browser.pages();
+  if (pages.length === 0) return;
+  const session = await pages[0].target().createCDPSession();
+  try {
+    // Tüm cookie'leri sil (sadece google değil)
+    await session.send("Network.clearBrowserCookies").catch(() => {});
+    // Cache temizle
+    await session.send("Network.clearBrowserCache").catch(() => {});
+    // localStorage / sessionStorage / IndexedDB için Storage.clearDataForOrigin "*"
+    await session.send("Storage.clearDataForOrigin", {
+      origin: "*",
+      storageTypes: "all",
+    }).catch(() => {});
+    console.log(`  ✓ Storage temizlendi (cookies + cache + localStorage + IndexedDB)`);
+  } catch (e) {
+    console.log(`  ✗ Storage temizleme hatası: ${e.message.split("\n")[0]}`);
+  }
+  await session.detach().catch(() => {});
+}
+
+module.exports = { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, sessionWarmup, clearAllStorage };

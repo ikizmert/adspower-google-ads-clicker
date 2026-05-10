@@ -4,7 +4,7 @@ puppeteer.use(StealthPlugin());
 const { config, queries, parseQuery } = require("./config");
 const provider = config.provider === "hyperbrowser" ? require("./hyperbrowser") : require("./adspower");
 const { checkStatus, openBrowser, closeBrowser, listProfiles, clearCache, applyStickyProxy } = provider;
-const { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, sessionWarmup } = require("./searcher");
+const { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, sessionWarmup, clearAllStorage } = require("./searcher");
 const tracker = require("./profile-tracker");
 const clickCounter = require("./click-counter");
 const { state: stats } = require("./stats");
@@ -143,6 +143,9 @@ async function runSession(profile, parsedQueries) {
   }
 
   await closeExtraTabs(browser);
+
+  // Storage temizle (Model 0: her session disposable)
+  await clearAllStorage(browser).catch(() => {});
 
   // Passive mod
   if (process.argv.includes("--passive")) {

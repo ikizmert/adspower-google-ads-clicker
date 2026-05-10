@@ -103,3 +103,10 @@ test("substring match — 'denizcicekci' allAdDomains'de 'denizcicekcilik.com' o
   tracker.update(["denizcicekcilik.com", "other.com"], ["denizcicekci"]);
   assert.strictEqual(tracker.getMissed("denizcicekci"), 0);
 });
+
+test("substring match — kısa ad domain target uzun string'i match etmez (false positive guard)", () => {
+  const { tracker } = makeTmpTracker();
+  // Sayfada "cicek.com" görünüyor ama target "hizlicicek.com" — match etmemeli
+  tracker.update(["cicek.com"], ["hizlicicek.com"]);
+  assert.strictEqual(tracker.getMissed("hizlicicek.com"), 1, "hizlicicek.com görünmedi sayılmalı (cicek.com farklı domain)");
+});

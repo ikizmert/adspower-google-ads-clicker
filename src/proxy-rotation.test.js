@@ -55,3 +55,9 @@ test("composeProxyUser — city yoksa area-TR ile compose", () => {
   const user = composeProxyUser(provider, null, "SID12345");
   assert.strictEqual(user, "ap-foo_area-TR_session-SID12345_life-30");
 });
+
+test("composeProxyUser — custom lifeMinutes değeri kullanılır", () => {
+  const provider = { base_user: "ap-foo" };
+  const user = composeProxyUser(provider, "ANKARA", "SID00001", 60);
+  assert.strictEqual(user, "ap-foo_area-TR_city-ANKARA_session-SID00001_life-60");
+});

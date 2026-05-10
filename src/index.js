@@ -4,7 +4,7 @@ puppeteer.use(StealthPlugin());
 const { config, queries, parseQuery } = require("./config");
 const provider = config.provider === "hyperbrowser" ? require("./hyperbrowser") : require("./adspower");
 const { checkStatus, openBrowser, closeBrowser, listProfiles, clearCache, applyStickyProxy } = provider;
-const { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, sessionWarmup, clearAllStorage } = require("./searcher");
+const { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, sessionWarmup, clearAllStorage, doFillerSearches } = require("./searcher");
 const tracker = require("./profile-tracker");
 const clickCounter = require("./click-counter");
 const { state: stats } = require("./stats");
@@ -146,6 +146,20 @@ async function runSession(profile, parsedQueries) {
 
   // Storage temizle (Model 0: her session disposable)
   await clearAllStorage(browser).catch(() => {});
+
+  // Filler aramalar — Model 0: her session başında 1-2 alakasız sorgu
+  const fillerCount = config.behavior.filler_queries_per_session || 0;
+  if (fillerCount > 0) {
+    const fillerResult = await doFillerSearches(browser, fillerCount, `[${sessionLabel}] `).catch(() => ({ hadCaptcha: false }));
+    if (fillerResult.hadCaptcha && !fillerResult.solved) {
+      console.log(`[${sessionLabel}] ⚠ Filler captcha çözülemedi → session erken kapatılıyor`);
+      try { browser.disconnect(); await closeBrowser(profileId); } catch {}
+      failedProfiles.set(profileId, Date.now());
+      stats.completed++;
+      stats.totalFailed++;
+      return { clicked: 0, hits: 0, adsFound: 0 };
+    }
+  }
 
   // Passive mod
   if (process.argv.includes("--passive")) {

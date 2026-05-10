@@ -5,6 +5,20 @@ const { recordAd, recordHit } = require("./stats");
 const fs = require("fs");
 const path = require("path");
 
+const FILLER_QUERIES_PATH = path.join(__dirname, "..", "filler-queries.txt");
+
+function loadFillerQueries() {
+  try {
+    return fs.readFileSync(FILLER_QUERIES_PATH, "utf-8")
+      .split("\n").map((l) => l.trim()).filter(Boolean);
+  } catch { return []; }
+}
+
+function pickRandomQueries(arr, count) {
+  const shuffled = [...arr].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count);
+}
+
 async function takeScreenshot(page, domain, tag = "") {
   try {
     // Sayfanın yüklenmesini bekle
@@ -101,6 +115,52 @@ async function solveCaptcha(page, tag = "") {
   } finally {
     release();
   }
+}
+
+async function doFillerSearches(browser, count, tag = "") {
+  const fillers = loadFillerQueries();
+  if (fillers.length === 0) {
+    console.log(`${tag}⚠ filler-queries.txt boş veya bulunamadı`);
+    return { hadCaptcha: false };
+  }
+  const picks = pickRandomQueries(fillers, count);
+  console.log(`${tag}🌿 Filler aramalar (${picks.length}): ${picks.join(", ")}`);
+
+  for (const fq of picks) {
+    let page;
+    try {
+      page = await doSearch(browser, null, fq, tag);
+      if (!page) continue;
+
+      // Captcha kontrolü — solve_continue politikası
+      if (await isCaptchaPage(page)) {
+        console.log(`${tag}⚠ Filler "${fq}"da captcha — çözmeye çalışılıyor`);
+        const solved = await solveCaptcha(page, tag);
+        if (!solved) {
+          console.log(`${tag}✗ Filler captcha çözülemedi → session terk`);
+          return { hadCaptcha: true, solved: false };
+        }
+      }
+
+      // İlk organik sonuca tıkla, kısa gez, kapat
+      await randomSleep(1, 2);
+      const firstOrganic = await page.$('#rso a[href]:not([data-pcu]):not([href*="google.com"])');
+      if (firstOrganic) {
+        try {
+          const newTab = await clickInNewTab(browser, page, firstOrganic);
+          if (newTab) {
+            await sleep(5000 + Math.random() * 3000);
+            await newTab.close().catch(() => {});
+          }
+        } catch {}
+      }
+    } catch (e) {
+      console.log(`${tag}✗ Filler "${fq}" hatası: ${e.message.split("\n")[0]}`);
+    } finally {
+      try { if (page) await page.close(); } catch {}
+    }
+  }
+  return { hadCaptcha: false };
 }
 
 async function sessionWarmup(page, tag = "") {
@@ -756,4 +816,4 @@ async function clearAllStorage(browser) {
   await session.detach().catch(() => {});
 }
 
-module.exports = { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, sessionWarmup, clearAllStorage };
+module.exports = { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, sessionWarmup, clearAllStorage, doFillerSearches };

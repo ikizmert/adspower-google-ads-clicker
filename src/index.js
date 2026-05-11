@@ -109,7 +109,7 @@ async function runSession(profile, parsedQueries, budgetTracker) {
   console.log(`[${sessionLabel}] ${profileName} (oturum: ${profileStats.sessions + 1}/5) başlıyor...`);
 
   // Browser açılmadan önce sticky proxy uygula (session boyunca sabit IP)
-  await applyStickyProxy(profileId).catch(() => {});
+  let proxyApplied = await applyStickyProxy(profileId).catch(() => null);
 
   let browser;
   try {
@@ -124,32 +124,6 @@ async function runSession(profile, parsedQueries, budgetTracker) {
     await enableImageBlocking(browser);
   }
 
-  // CapSolver extension'a API key inject et (her session başında)
-  if (config.capsolver_api_key) {
-    try {
-      const targets = await browser.targets();
-      let injected = false;
-      for (const t of targets) {
-        if (t.type() !== "service_worker" && t.type() !== "background_page") continue;
-        const extUrl = t.url();
-        console.log(`  Extension: ${t.type()} | ${extUrl.substring(0, 70)}`);
-        try {
-          const ctx = t.type() === "service_worker" ? await t.worker() : await t.page();
-          if (!ctx) continue;
-          await ctx.evaluate((key) => {
-            try {
-              const cfg = { apiKey: key, enabledForRecaptchaV2: true, enabledForRecaptchaV3: true, enabledForHCaptcha: true, enabledForImageToText: true };
-              chrome.storage.local.set({ config: cfg, defaultConfig: cfg });
-            } catch {}
-          }, config.capsolver_api_key).catch(() => {});
-          injected = true;
-        } catch {}
-      }
-      if (injected) console.log("  ✓ CapSolver API key inject edildi");
-      else console.log("  ⚠ Extension bulunamadı");
-    } catch {}
-  }
-
   await closeExtraTabs(browser);
 
   // Storage temizle (Model 0: her session disposable)
@@ -158,7 +132,7 @@ async function runSession(profile, parsedQueries, budgetTracker) {
   // Filler aramalar — Model 0: her session başında 1-2 alakasız sorgu
   const fillerCount = config.behavior.filler_queries_per_session || 0;
   if (fillerCount > 0) {
-    const fillerResult = await doFillerSearches(browser, fillerCount, `[${sessionLabel}] `).catch(() => ({ hadCaptcha: false }));
+    const fillerResult = await doFillerSearches(browser, fillerCount, proxyApplied, `[${sessionLabel}] `).catch(() => ({ hadCaptcha: false }));
     if (fillerResult.hadCaptcha && !fillerResult.solved) {
       console.log(`[${sessionLabel}] ⚠ Filler captcha çözülemedi → session erken kapatılıyor`);
       try { browser.disconnect(); await closeBrowser(profileId); } catch {}
@@ -186,7 +160,7 @@ async function runSession(profile, parsedQueries, budgetTracker) {
     const q = sessionQueries[qi];
     let result;
     try {
-      result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks, budgetTracker);
+      result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks, budgetTracker, proxyApplied);
     } catch (e) {
       console.error(`[${sessionLabel}] Query hatası ("${q.search}"): ${e.message.split("\n")[0]} — atlanıyor`);
       continue;
@@ -200,12 +174,13 @@ async function runSession(profile, parsedQueries, budgetTracker) {
         console.log(`[${sessionLabel}] ⚠ ${reason} — yeni IP deneniyor (${retry}/3)...`);
         try { browser.disconnect(); await closeBrowser(profileId); } catch {}
         await sleep(2000);
-        await applyStickyProxy(profileId).catch(() => {});
+        const newProxy = await applyStickyProxy(profileId).catch(() => null);
+        if (newProxy) proxyApplied = newProxy;
         try {
           const { wsEndpoint } = await openBrowser(profileId);
           browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
           await closeExtraTabs(browser);
-          result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks, budgetTracker);
+          result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks, budgetTracker, proxyApplied);
           if (!needsRetry(result)) break;
         } catch (e) {
           console.log(`[${sessionLabel}] Retry ${retry} başarısız: ${e.message.split("\n")[0]}`);
@@ -328,16 +303,17 @@ async function run() {
 
   stats.maxRun = unlimited ? Infinity : maxRun;
   let lastClickTime = Date.now();
-  let lastClickedSnapshot = stats.totalClicked;
-  const SESSION_TIMEOUT = 8 * 60 * 1000;
+  let lastActivitySnapshot = stats.totalClicked + stats.totalHits;
+  const SESSION_TIMEOUT = (config.behavior.session_timeout_minutes || 15) * 60 * 1000;
 
   // Continuous queue: ana loop sequential, sessionlar paralel
   const active = new Map(); // promise -> profileId
 
   function shouldStop() {
-    // stats.totalClicked anlık güncelleniyor (searcher.js recordAd) — değişimi izle
-    if (stats.totalClicked > lastClickedSnapshot) {
-      lastClickedSnapshot = stats.totalClicked;
+    // Reklam + organik tıklamalar anlık güncelleniyor — değişimi izle
+    const totalActivity = stats.totalClicked + stats.totalHits;
+    if (totalActivity > lastActivitySnapshot) {
+      lastActivitySnapshot = totalActivity;
       lastClickTime = Date.now();
     }
     if (maxTotalClicks > 0 && stats.totalClicked >= maxTotalClicks) {
@@ -346,7 +322,7 @@ async function run() {
     }
     if (idleTimeoutMs > 0 && Date.now() - lastClickTime > idleTimeoutMs) {
       const dakika = Math.round((Date.now() - lastClickTime) / 60000);
-      stats.stopReason = `${config.behavior.idle_timeout_minutes}dk boyunca reklam tıklama yok (${dakika}dk geçti)`;
+      stats.stopReason = `${config.behavior.idle_timeout_minutes}dk boyunca tıklama yok (${dakika}dk geçti)`;
       return true;
     }
 

@@ -84,6 +84,7 @@ function randomSid() {
 
 async function applyStickyProxy(profileId) {
   const sid = randomSid();
+  let appliedUser = "";
   const rotation = config.proxy_rotation;
 
   // Yeni schema: proxy_rotation.providers
@@ -91,6 +92,7 @@ async function applyStickyProxy(profileId) {
     const provider = selectProvider(rotation.providers);
     const city = selectCity(provider);
     const user = composeProxyUser(provider, city, sid);
+    appliedUser = user;
 
     const updateUrl = `${API}/api/v1/user/update`;
     const updateRes = await fetch(updateUrl, {
@@ -112,13 +114,14 @@ async function applyStickyProxy(profileId) {
     if (updateData.code === 0) {
       console.log(`  Sticky proxy: ${provider.name} ${city || "TR"} sid=${sid}`);
     }
-    return;
+    return { sid, proxyUser: appliedUser, provider };
   }
 
   // Eski schema fallback (config.proxy.host varsa)
   const proxyConfig = config.proxy;
   if (proxyConfig && proxyConfig.host) {
-    const user = `${proxyConfig.base_user}_session-${sid}_life-30`;
+    const user = `${proxyConfig.base_user}_session-${sid}`;
+    appliedUser = user;
     const updateUrl = `${API}/api/v1/user/update`;
     await fetch(updateUrl, {
       method: "POST",
@@ -135,8 +138,12 @@ async function applyStickyProxy(profileId) {
         },
       }),
     });
-    console.log(`  Sticky proxy (legacy): sid=${sid} (30dk)`);
+    const lifeMatch = (proxyConfig.base_user || "").match(/life-(\d+)/);
+    const lifeInfo = lifeMatch ? `${lifeMatch[1]}dk` : "default";
+    console.log(`  Sticky proxy (legacy): sid=${sid} (life=${lifeInfo})`);
+    return { sid, proxyUser: appliedUser, provider: null };
   }
+  return { sid: null, proxyUser: "", provider: null };
 }
 
 async function clearCache(profileId) {

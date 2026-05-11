@@ -2,6 +2,7 @@ const { config } = require("./config");
 const { logRanking, logNotFound } = require("./ranking-logger");
 const clickCounter = require("./click-counter");
 const { recordAd, recordHit } = require("./stats");
+const captchaSolver = require("./captcha-solver");
 const fs = require("fs");
 const path = require("path");
 
@@ -19,7 +20,18 @@ function pickRandomQueries(arr, count) {
   return shuffled.slice(0, count);
 }
 
-async function takeScreenshot(page, domain, tag = "") {
+function slugify(s) {
+  return (s || "")
+    .toString()
+    .toLowerCase()
+    .replace(/ç/g, "c").replace(/ğ/g, "g").replace(/ı/g, "i")
+    .replace(/ö/g, "o").replace(/ş/g, "s").replace(/ü/g, "u")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .substring(0, 60);
+}
+
+async function takeScreenshot(page, domain, tag = "", meta = {}) {
   try {
     if (!page || page.isClosed()) {
       console.log(`${tag}📸 Screenshot iptal: page kapalı (entry)`);
@@ -37,12 +49,26 @@ async function takeScreenshot(page, domain, tag = "") {
     await page.waitForSelector("body", { timeout: 5000 }).catch(() => {});
 
     const now = new Date();
-    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
-    const dir = path.join(__dirname, "..", "screenshots", domain.replace(/[^a-zA-Z0-9.-]/g, "_"));
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mi = String(now.getMinutes()).padStart(2, "0");
+    const ss = String(now.getSeconds()).padStart(2, "0");
+    const monthDir = `${yyyy}-${mm}`;
+    const dayDir = `${yyyy}-${mm}-${dd}`;
+    const timeStr = `${hh}-${mi}-${ss}`;
+    const safeDomain = domain.replace(/[^a-zA-Z0-9.-]/g, "_");
+    const dir = path.join(__dirname, "..", "screenshots", monthDir, dayDir, safeDomain);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    const filePath = path.join(dir, `${dateStr}.png`);
+
+    let suffix = "";
+    if (meta.query) suffix += `_${slugify(meta.query)}`;
+    if (meta.page) suffix += `_p${meta.page}`;
+    if (meta.position) suffix += `_s${meta.position}`;
+    const filePath = path.join(dir, `${timeStr}${suffix}.png`);
     await page.screenshot({ path: filePath, fullPage: false });
-    console.log(`${tag}📸 Screenshot kaydedildi: ${domain}/${dateStr}.png`);
+    console.log(`${tag}📸 Screenshot kaydedildi: ${monthDir}/${dayDir}/${safeDomain}/${timeStr}${suffix}.png`);
   } catch (e) {
     console.log(`${tag}📸 Screenshot hatası: ${e.message.split("\n")[0]}`);
   }
@@ -87,48 +113,11 @@ async function isCaptchaPage(page) {
   }
 }
 
-// Captcha queue — aynı anda sadece 1 captcha çözülsün (bringToFront çakışmasın)
-let captchaQueue = Promise.resolve();
-
-async function solveCaptcha(page, tag = "") {
-  const timeoutSec = (config.behavior && config.behavior.captcha_solve_timeout_seconds) || 60;
-  const iterations = Math.ceil(timeoutSec / 2.5);
-
-  console.log(`${tag}🔓 Captcha sıraya alındı...`);
-
-  const prev = captchaQueue;
-  let release;
-  captchaQueue = new Promise((r) => { release = r; });
-
-  // Önceki captcha bitene kadar bekle
-  await prev;
-
-  try {
-    console.log(`${tag}🔓 Sıra geldi — extension bekleniyor (max ${timeoutSec}sn)...`);
-    try { await page.bringToFront(); } catch {}
-    try {
-      await page.reload({ waitUntil: "domcontentloaded", timeout: 15000 });
-      await sleep(3000);
-    } catch {}
-
-    for (let i = 0; i < iterations; i++) {
-      await sleep(2500);
-      try {
-        const url = page.url();
-        if (!url.includes("/sorry") && !url.includes("captcha")) {
-          console.log(`${tag}✓ Captcha çözüldü! → ${url}`);
-          return true;
-        }
-      } catch { break; }
-    }
-    console.log(`${tag}✗ Extension captcha çözemedi (${timeoutSec}sn)`);
-    return false;
-  } finally {
-    release();
-  }
+async function solveCaptcha(page, proxyApplied, tag = "") {
+  return await captchaSolver.solveCaptcha(page, proxyApplied, tag);
 }
 
-async function doFillerSearches(browser, count, tag = "") {
+async function doFillerSearches(browser, count, proxyApplied, tag = "") {
   const fillers = loadFillerQueries();
   if (fillers.length === 0) {
     console.log(`${tag}⚠ filler-queries.txt boş veya bulunamadı`);
@@ -146,7 +135,7 @@ async function doFillerSearches(browser, count, tag = "") {
       // Captcha kontrolü — solve_continue politikası
       if (await isCaptchaPage(page)) {
         console.log(`${tag}⚠ Filler "${fq}"da captcha — çözmeye çalışılıyor`);
-        const solved = await solveCaptcha(page, tag);
+        const solved = await solveCaptcha(page, proxyApplied, tag);
         if (!solved) {
           console.log(`${tag}✗ Filler captcha çözülemedi → session terk`);
           return { hadCaptcha: true, solved: false };
@@ -294,8 +283,34 @@ async function enableImageBlocking(browser) {
   });
 }
 
-async function doSearch(browser, _page, query, tag = "") {
-  // Yeni sekme aç → Google.com → arama kutusuna yaz → Enter
+async function doSearch(browser, page, query, tag = "") {
+  // 1. Mevcut sekme Google search sayfasındaysa aynı sekmede yeni arama yap (gerçekçi)
+  if (page && !page.isClosed()) {
+    try {
+      const url = page.url();
+      const onSearchPage = url.includes("google.") && url.includes("/search");
+      if (onSearchPage) {
+        const searchInput = await page.$('textarea[name="q"], input[name="q"]');
+        if (searchInput) {
+          await searchInput.click({ clickCount: 3 });
+          await randomSleep(0.2, 0.4);
+          await page.keyboard.press("Backspace");
+          await randomSleep(0.3, 0.6);
+          await searchInput.type(query, { delay: 100 + Math.random() * 150 });
+          await randomSleep(0.8, 1.4);
+          await Promise.all([
+            page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }),
+            page.keyboard.press("Enter"),
+          ]);
+          if (page.url().includes("/search")) return page;
+        }
+      }
+    } catch (e) {
+      console.log(`${tag}[!] Aynı sekme arama başarısız: ${e.message.split("\n")[0]} — yeni sekme deneniyor`);
+    }
+  }
+
+  // 2. Yeni sekme aç → Google.com → arama kutusuna yaz → Enter
   try {
     const newPage = await browser.newPage();
     await newPage.goto(GOOGLE_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -317,7 +332,7 @@ async function doSearch(browser, _page, query, tag = "") {
     console.log(`${tag}[!] Arama başarısız: ${e.message.split("\n")[0]}`);
   }
 
-  // Fallback: URL ile arama
+  // 3. Fallback: URL ile arama
   try {
     console.log(`${tag}[!] URL ile arama deneniyor...`);
     const fallback = await browser.newPage();
@@ -512,7 +527,7 @@ async function clickInNewTab(browser, page, element) {
   }
 }
 
-async function searchAndClick(browser, query, adDomains, hitDomains, label = "", sessionAdClicks = {}, tracker = null) {
+async function searchAndClick(browser, query, adDomains, hitDomains, label = "", sessionAdClicks = {}, tracker = null, proxyApplied = null) {
   let page = (await browser.pages())[0] || (await browser.newPage());
   const tag = label ? `[${label}] ` : "  ";
 
@@ -529,7 +544,7 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
   // Captcha tespit → CapSolver ile çöz, çözülemezse session atla
   if (await isCaptchaPage(page)) {
     console.log(`${tag}⚠ Captcha algılandı — çözülmeye çalışılıyor...`);
-    const solved = await solveCaptcha(page, tag);
+    const solved = await solveCaptcha(page, proxyApplied, tag);
     if (!solved) {
       return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
     }
@@ -601,7 +616,7 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
               const box = await ad.element.boundingBox().catch(() => null);
               if (box) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
             } catch {}
-            await takeScreenshot(page, ad.domain, tag);
+            await takeScreenshot(page, ad.domain, tag, { query, page: pg });
           }
           const newTab = await clickInNewTab(browser, page, ad.element);
           if (newTab) {
@@ -643,7 +658,7 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
             const box = await hit.element.boundingBox().catch(() => null);
             if (box) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
           } catch {}
-          await takeScreenshot(page, hit.domain, tag);
+          await takeScreenshot(page, hit.domain, tag, { query, page: pg, position: hit.position });
         }
         const newTab = await clickInNewTab(browser, page, hit.element);
         if (newTab) {

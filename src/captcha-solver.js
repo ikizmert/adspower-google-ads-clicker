@@ -32,7 +32,7 @@ async function detectCaptchaInfo(page) {
   }).catch(() => null);
 }
 
-async function createTask(info, proxy) {
+async function createTask(info, proxy, tag = "") {
   const taskType = info.enterprise ? "ReCaptchaV2EnterpriseTask" : "ReCaptchaV2Task";
   const body = {
     clientKey: config.capsolver_api_key,
@@ -47,16 +47,26 @@ async function createTask(info, proxy) {
       proxyPassword: proxy.password,
     },
   };
-  const res = await fetch(`${CAPSOLVER_API}/createTask`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (data.errorId) {
-    throw new Error(`createTask: ${data.errorCode || ""} ${data.errorDescription || ""}`.trim());
+
+  const MAX_RETRIES = 3;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    const res = await fetch(`${CAPSOLVER_API}/createTask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!data.errorId) return data.taskId;
+
+    const errMsg = `${data.errorCode || ""} ${data.errorDescription || ""}`.trim();
+    const isRetryable = errMsg.includes("PROXY_CONNECT") || errMsg.includes("PROXY_TIMEOUT") || errMsg.includes("ERROR_PROXY");
+    if (!isRetryable || attempt === MAX_RETRIES) {
+      throw new Error(`createTask: ${errMsg}`);
+    }
+    const wait = attempt * 3000;
+    console.log(`${tag}⚠ createTask proxy hatası (${attempt}/${MAX_RETRIES}), ${wait / 1000}s sonra tekrar: ${errMsg}`);
+    await sleep(wait);
   }
-  return data.taskId;
 }
 
 async function pollResult(taskId, maxWaitMs = 120000) {
@@ -148,7 +158,7 @@ async function solveCaptcha(page, proxyApplied, tag = "") {
     console.log(`${tag}🔑 Sitekey: ${info.sitekey.substring(0, 30)}... (enterprise=${info.enterprise})`);
 
     console.log(`${tag}📤 CapSolver task gönderiliyor (proxy=${proxy.host}:${proxy.port})...`);
-    const taskId = await createTask(info, proxy);
+    const taskId = await createTask(info, proxy, tag);
     console.log(`${tag}🆔 TaskID: ${taskId}`);
 
     console.log(`${tag}⏳ Çözüm bekleniyor (max 120s)...`);

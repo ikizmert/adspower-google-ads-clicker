@@ -13,7 +13,8 @@ test("yeni profil cold state'inde başlar", () => {
   const file = tmpFile();
   const mgr = createProfileStateManager({ stateFile: file, successCooldownMs: 1000, failureCooldownMs: 2000 });
   assert.equal(mgr.getState("p1").state, "cold");
-  fs.unlinkSync(file);
+  // getState alone doesn't write to disk (pure ensure); file may not exist
+  if (fs.existsSync(file)) fs.unlinkSync(file);
 });
 
 test("transition cold → warming → warm geçişi", () => {
@@ -54,11 +55,12 @@ test("failure transition → failureCooldown uygulanır", () => {
   fs.unlinkSync(file);
 });
 
-test("geçersiz state'e transition reddedilir", () => {
+test("geçersiz state'e transition reddedilir + side effect yok", () => {
   const file = tmpFile();
   const mgr = createProfileStateManager({ stateFile: file, successCooldownMs: 1000, failureCooldownMs: 2000 });
   assert.throws(() => mgr.transition("p1", "frozen"), /invalid state/i);
-  fs.unlinkSync(file);
+  // Spec: invalid state'e transition side-effect oluşturmamalı — disk'e p1 yazılmamış olmalı
+  assert.equal(fs.existsSync(file), false, "invalid transition diske yazmamalı");
 });
 
 test("cooldown geçince cooling → cold otomatik geçer", () => {
@@ -95,7 +97,8 @@ test("selectNextTask: warm yok ama cold var → warmup", () => {
   const decision = mgr.selectNextTask(["p1", "p2"], true);
   assert.equal(decision.type, "warmup");
   assert.ok(["p1", "p2"].includes(decision.profileId));
-  fs.unlinkSync(file);
+  // selectNextTask with no prior transition doesn't write to disk (pure ensure)
+  if (fs.existsSync(file)) fs.unlinkSync(file);
 });
 
 test("selectNextTask: warm var ama pending target yok → null (pool boşa beslenmez)", () => {

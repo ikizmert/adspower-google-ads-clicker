@@ -31,7 +31,6 @@ function createProfileStateManager({ stateFile, successCooldownMs, failureCooldo
         warmupCount: 0,
         clickCount: 0,
       };
-      atomicWrite(stateFile, data);
     }
     return data.profiles[profileId];
   }
@@ -41,10 +40,10 @@ function createProfileStateManager({ stateFile, successCooldownMs, failureCooldo
   }
 
   function transition(profileId, newState, opts = {}) {
-    const p = ensure(profileId);
     if (!VALID_STATES.includes(newState)) {
       throw new Error(`invalid state: ${newState}`);
     }
+    const p = ensure(profileId);
     const prev = p.state;
     p.state = newState;
     p.lastTransitionAt = Date.now();

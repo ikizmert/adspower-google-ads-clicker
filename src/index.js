@@ -348,6 +348,11 @@ async function run() {
     failureCooldownMs: (config.behavior.captcha_failure_cooldown_minutes || 15) * 60 * 1000,
   });
 
+  const resetCount = profileState.resetStaleBusyStates();
+  if (resetCount > 0) {
+    console.log(`⚙ ${resetCount} profil önceki run'dan warming/clicking state'inde takılıydı → cold reset`);
+  }
+
   const active = new Map(); // promise -> { profileId, type }
 
   function activeCounts() {

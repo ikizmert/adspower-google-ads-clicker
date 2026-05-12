@@ -172,3 +172,31 @@ test("setSid: yeni sid eski sid'i overwrite eder", () => {
   assert.equal(mgr.getSid("p1"), "SECOND");
   fs.unlinkSync(file);
 });
+
+test("resetStaleBusyStates: warming/clicking → cold reset edilir (process crash recovery)", () => {
+  const file = tmpFile();
+  const mgr = createProfileStateManager({ stateFile: file, successCooldownMs: 1000, failureCooldownMs: 2000 });
+  mgr.transition("p1", "warming");
+  mgr.transition("p2", "warming");
+  mgr.transition("p2", "warm");
+  mgr.transition("p2", "clicking");
+  mgr.transition("p3", "warming");
+  mgr.transition("p3", "warm");
+  // Şu an: p1=warming, p2=clicking, p3=warm
+  const resetCount = mgr.resetStaleBusyStates();
+  assert.equal(resetCount, 2);
+  assert.equal(mgr.getState("p1").state, "cold");
+  assert.equal(mgr.getState("p2").state, "cold");
+  assert.equal(mgr.getState("p3").state, "warm");  // warm dokunulmaz
+  fs.unlinkSync(file);
+});
+
+test("resetStaleBusyStates: reset edilen profil cooldown'a girmez (failure değil)", () => {
+  const file = tmpFile();
+  const mgr = createProfileStateManager({ stateFile: file, successCooldownMs: 5000, failureCooldownMs: 10000 });
+  mgr.transition("p1", "warming");
+  mgr.resetStaleBusyStates();
+  assert.equal(mgr.getState("p1").cooldownUntil, 0);  // hemen kullanılabilir
+  assert.equal(mgr.isAvailable("p1"), true);
+  fs.unlinkSync(file);
+});

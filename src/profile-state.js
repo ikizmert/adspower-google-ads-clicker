@@ -115,7 +115,26 @@ function createProfileStateManager({ stateFile, successCooldownMs, failureCooldo
     atomicWrite(stateFile, data);
   }
 
-  return { getState, save, transition, tick, selectNextTask, isAvailable, setSid, getSid };
+  function resetStaleBusyStates() {
+    // Process crash/Ctrl+C sonrası warming/clicking state'inde takılı profilleri cold'a reset et.
+    // Bunlar gerçek aktif task değil — eski process'ten kalma.
+    let count = 0;
+    for (const id of Object.keys(data.profiles)) {
+      const p = data.profiles[id];
+      if (p.state === "warming" || p.state === "clicking") {
+        p.state = "cold";
+        p.lastTransitionAt = Date.now();
+        p.cooldownUntil = 0;  // immediate availability — they didn't actually fail
+        count += 1;
+      }
+    }
+    if (count > 0) {
+      atomicWrite(stateFile, data);
+    }
+    return count;
+  }
+
+  return { getState, save, transition, tick, selectNextTask, isAvailable, getSid, setSid, resetStaleBusyStates };
 }
 
 module.exports = { createProfileStateManager, VALID_STATES };

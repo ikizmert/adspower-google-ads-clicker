@@ -36,16 +36,23 @@ async function openBrowser(profileId) {
     adblock: false,
   };
 
-  // BYO external proxy — doğru SDK formatı: flat proxyServer/Username/Password + useProxy: true
-  // (Free plan'da useProxy: true bloklu, paid plan gerekli)
-  if (config.proxy && config.proxy.host) {
+  // Proxy seçimi — 3 mod:
+  //   1. use_managed_proxy: true → hyperbrowser yönetilen TR proxy (farklı havuz, aproxy flag yediyse alternatif)
+  //   2. config.proxy.host varsa → BYO external (aproxy)
+  //   3. Hiçbiri → proxy yok (free plan'da olabilir)
+  if (hbConfig.use_managed_proxy === true) {
+    sessionOpts.useProxy = true;
+    sessionOpts.proxyCountry = hbConfig.proxy_country || "TR";
+    if (hbConfig.proxy_city) sessionOpts.proxyCity = hbConfig.proxy_city;
+    console.log(`  Sticky proxy (hyperbrowser managed): country=${sessionOpts.proxyCountry}${hbConfig.proxy_city ? " city=" + hbConfig.proxy_city : ""}`);
+  } else if (config.proxy && config.proxy.host) {
     const sid = randomSid();
     const scheme = config.proxy.type || "http";
     sessionOpts.useProxy = true;
     sessionOpts.proxyServer = `${scheme}://${config.proxy.host}:${config.proxy.port}`;
     sessionOpts.proxyServerUsername = `${config.proxy.base_user}_session-${sid}`;
     sessionOpts.proxyServerPassword = config.proxy.password;
-    console.log(`  Sticky proxy (hyperbrowser BYO): sid=${sid}`);
+    console.log(`  Sticky proxy (BYO external): sid=${sid}`);
   } else {
     sessionOpts.useProxy = hbConfig.use_proxy === true;
   }

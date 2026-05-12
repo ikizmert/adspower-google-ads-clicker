@@ -1,9 +1,10 @@
 // Model 2: Simple aggressive runner — hyperbrowser cloud sessions, no warmup, no state machine.
 // Her session: open → search → click → close → bir sonraki random query'e geç.
 
-const puppeteer = require("puppeteer-extra");
-const StealthPlugin = require("puppeteer-extra-plugin-stealth");
-puppeteer.use(StealthPlugin());
+// Model 2 hyperbrowser kullaniyor — hyperbrowser kendi useStealth'i var.
+// puppeteer-extra-plugin-stealth ile cifte stealth detection paterni yaratiyordu.
+// puppeteer-core direkt kullan (hb-test'in calistigi sekilde).
+const puppeteer = require("puppeteer-core");
 
 const { config } = require("./config");
 const { searchAndClick, closeExtraTabs, enableImageBlocking } = require("./searcher");

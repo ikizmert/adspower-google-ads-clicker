@@ -1,8 +1,42 @@
-# AdsPower Google Ads Clicker — Model 0
+# AdsPower Google Ads Clicker
 
 AdsPower anti-detect browser ile Google reklam tıklama (rakip bütçe yakma) + organik hit üretme aracı.
 
-## Strateji: Model 0 — Disposable Aggressive Click Velocity
+## Model 1: Two-Stage Profile Lifecycle
+
+Her profil 5 state'ten birinde:
+
+- `cold`: cookies temiz, warmup gerekli
+- `warming`: şu an warmup session'ında
+- `warm`: warmup bitti, click için hazır
+- `clicking`: şu an click session'ında
+- `cooling`: click bitti, cooldown'da
+
+**Worker davranışı (5 paralel):**
+- Warm profil + pending target varsa → click session
+- Yoksa cold profil → warmup session
+- Self-balancing: warm pool azalırsa worker'lar warmup'a kayar
+
+**Lifecycle:**
+1. **Warmup session** (~4 dk): Facebook → Google News (haber tıklama) → Gmail. Cookies organik birikir (NID, SOCS, vb.). Profil kapanır.
+2. **Click session** (~4 dk): Aynı profil yeni sticky proxy session ID ile açılır (warmup'tan farklı IP). Cookies wipe edilmez — warmup'tan kalanlar tıklamada kullanılır. Target query'ler aranır, reklam tıklanır.
+3. **Click sonu**: TÜM Google cookies silinir, profil `cooling` state'inde, 5 dk cooldown sonra `cold`'a döner.
+4. **Captcha durumunda** (`captcha_action: "abort"`): session terk, profil 15 dk failure cooldown.
+
+State persist: `profile-state.json` (gitignored). Process restart sonrası state korunur.
+
+### Yeni Config Alanları (Model 1)
+
+| Alan | Default | Anlam |
+|---|---|---|
+| `captcha_action` | `"abort"` | Captcha çıkınca davranış (`abort` veya `solve_continue`) |
+| `warmup_enabled` | `true` | Warmup phase'i devre dışı bırak (test için) |
+| `post_click_cooldown_minutes` | `5` | Click sonrası normal cooldown |
+| `captcha_failure_cooldown_minutes` | `15` | Captcha sonrası uzun cooldown |
+| `rotate_proxy_between_phases` | `true` | Warmup ve click farklı sticky session ID kullansın |
+| `filler_queries_per_session` | `0` | Devre dışı (warmup zaten amacını karşılıyor) |
+
+## Strateji: Model 0 (önceki davranış) — Disposable Aggressive Click Velocity
 
 Her session disposable ("tek kullanımlık"). Trust biriktirmek yerine **velocity** ve **rakip bütçe yakma** önceliği. AdsPower fingerprint her browser açılışında otomatik regenerate (`Random fingerprint: Enabled` ile). Adaptive target tracking — rakibin reklamı 3 ardışık aramada görünmüyorsa "bütçesi muhtemelen bitti" sayılır, gün sonuna kadar atlanır.
 
@@ -106,7 +140,9 @@ kuşadası çiçekçi@adelcicek.com#denizcicekcilik.com#hizlicicek.com
 
 ## Filler Queries (`filler-queries.txt`)
 
-Her session başında rastgele seçilen alakasız sorgular. Bu aramalar `clicks.json` ve `rankings.json`'a **yazılmaz** (count'a girmez).
+**(Model 0 / Deprecated)** Her session başında rastgele seçilen alakasız sorgular. Bu aramalar `clicks.json` ve `rankings.json`'a **yazılmaz** (count'a girmez).
+
+Model 1'de filler queries özelliği **devre dışı** (`filler_queries_per_session: 0`). Warmup session zaten cookie birikimi ve organik hit amacını karşılıyor.
 
 ```
 hava durumu
@@ -131,7 +167,7 @@ Passive mod (manuel test için):
 npm start -- --passive
 ```
 
-## Akış (Model 0)
+## Akış: Model 0 (Arşiv)
 
 1. Profil seçilir (LRU, cooldown'dan çıkmış, en eski lastUsedAt)
 2. Rastgele şehir + yeni sticky session ID ile proxy uygulanır
@@ -176,8 +212,9 @@ npm run profiles
 
 ## Dosyalar
 
+- `profile-state.json` (gitignored) — Model 1 profil state'leri (cold/warming/warm/clicking/cooling)
 - `pilot-cookies.json` (gitignored, atıl) — eski pilot cookie sistemi (Model 0 kullanmıyor)
 - `profiles.json` (gitignored) — profil kullanım istatistikleri
-- `clicks.json` (gitignored) — domain başına kümülatif tıklama (filler dahil değil)
+- `clicks.json` (gitignored) — domain başına kümülatif tıklama
 - `rankings.json` (gitignored) — organik sıralama geçmişi
 - `budget-state.json` (gitignored) — adaptive tracker günlük state

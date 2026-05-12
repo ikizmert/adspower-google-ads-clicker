@@ -4,7 +4,8 @@ puppeteer.use(StealthPlugin());
 const { config, queries, parseQuery } = require("./config");
 const provider = config.provider === "hyperbrowser" ? require("./hyperbrowser") : require("./adspower");
 const { checkStatus, openBrowser, closeBrowser, listProfiles, clearCache, applyStickyProxy } = provider;
-const { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, sessionWarmup, clearAllStorage, doFillerSearches } = require("./searcher");
+const { searchAndClick, closeExtraTabs, enableImageBlocking, clearAllGoogleCookies, sessionWarmup } = require("./searcher");
+const { createProfileStateManager } = require("./profile-state");
 const tracker = require("./profile-tracker");
 const clickCounter = require("./click-counter");
 const { state: stats } = require("./stats");
@@ -74,84 +75,94 @@ async function resetIfNeeded(profiles) {
   }
 }
 
-const failedProfiles = new Map(); // profileId -> { time: ms, failure: bool }
-
-function pickProfiles(profiles, count, excludeIds = new Set()) {
-  const now = Date.now();
-  const SUCCESS_COOLDOWN = (config.behavior.profile_cooldown_minutes || 10) * 60 * 1000;
-  const FAILURE_COOLDOWN = (config.behavior.captcha_failure_cooldown_minutes || 15) * 60 * 1000;
-
-  const available = profiles.filter((p) => {
-    if (excludeIds.has(p.id)) return false;
-    const fail = failedProfiles.get(p.id);
-    if (fail) {
-      const cooldown = fail.failure ? FAILURE_COOLDOWN : SUCCESS_COOLDOWN;
-      if (now - fail.time < cooldown) return false;
-      failedProfiles.delete(p.id);
-    }
-    return true;
-  });
-  const shuffled = [...available];
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-  return shuffled.slice(0, Math.min(count, shuffled.length));
-}
-
-async function runSession(profile, parsedQueries, budgetTracker) {
-  let sessionFailureFlag = false;
+async function runWarmupSession(profile, profileState) {
   const profileId = profile.id;
   const sessionLabel = `#${profile.serial || "?"}`;
   const profileName = profile.name || profileId;
-  const profileStats = tracker.getProfile(profileId);
+  console.log(`[${sessionLabel}] ${profileName} WARMUP başlıyor...`);
 
-  console.log(`[${sessionLabel}] ${profileName} (oturum: ${profileStats.sessions + 1}/5) başlıyor...`);
+  profileState.transition(profileId, "warming");
 
-  // Browser açılmadan önce sticky proxy uygula (session boyunca sabit IP)
-  let proxyApplied = await applyStickyProxy(profileId).catch(() => null);
+  await applyStickyProxy(profileId).catch(() => null);
 
   let browser;
   try {
     const { wsEndpoint } = await openBrowser(profileId);
     browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
   } catch (e) {
-    console.error(`[${sessionLabel}] Browser açılamadı: ${e.message}`);
+    console.error(`[${sessionLabel}] Warmup browser açılamadı: ${e.message.split("\n")[0]}`);
+    profileState.transition(profileId, "cold", { failure: true });
+    return { success: false };
+  }
+
+  if (config.behavior.block_images) {
+    await enableImageBlocking(browser);
+  }
+  await closeExtraTabs(browser);
+
+  const pages = await browser.pages();
+  const page = pages[0] || (await browser.newPage());
+
+  let result;
+  try {
+    result = await sessionWarmup(page, `[${sessionLabel}] `);
+  } catch (e) {
+    console.error(`[${sessionLabel}] Warmup hatası: ${e.message.split("\n")[0]}`);
+    result = { success: false, hadCaptcha: false };
+  }
+
+  try { browser.disconnect(); await closeBrowser(profileId); } catch {}
+
+  if (result.success) {
+    profileState.transition(profileId, "warm");
+    console.log(`[${sessionLabel}] ✓ Warmup OK → warm`);
+  } else if (result.hadCaptcha) {
+    profileState.transition(profileId, "cold", { failure: true });
+    console.log(`[${sessionLabel}] ✗ Warmup captcha → cold + 15dk cooldown`);
+  } else {
+    profileState.transition(profileId, "cold", { failure: false });
+    console.log(`[${sessionLabel}] ✗ Warmup hata → cold (normal cooldown)`);
+  }
+  return result;
+}
+
+async function runClickSession(profile, profileState, parsedQueries, budgetTracker) {
+  let sessionFailureFlag = false;
+  let captchaHit = false;
+  const profileId = profile.id;
+  const sessionLabel = `#${profile.serial || "?"}`;
+  const profileName = profile.name || profileId;
+  console.log(`[${sessionLabel}] ${profileName} CLICK başlıyor (warm profil)...`);
+
+  profileState.transition(profileId, "clicking");
+
+  // Warmup'tan farklı IP almak için yeni sticky session (config flag varsa)
+  let proxyApplied = config.behavior.rotate_proxy_between_phases !== false
+    ? await applyStickyProxy(profileId).catch(() => null)
+    : null;
+
+  let browser;
+  try {
+    const { wsEndpoint } = await openBrowser(profileId);
+    browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
+  } catch (e) {
+    console.error(`[${sessionLabel}] Click browser açılamadı: ${e.message.split("\n")[0]}`);
+    profileState.transition(profileId, "cooling", { failure: true });
     return { clicked: 0, hits: 0, adsFound: 0 };
   }
 
   if (config.behavior.block_images) {
     await enableImageBlocking(browser);
   }
-
   await closeExtraTabs(browser);
-
-  // Filler aramalar — Model 0: her session başında 1-2 alakasız sorgu
-  const fillerCount = config.behavior.filler_queries_per_session || 0;
-  if (fillerCount > 0) {
-    const fillerResult = await doFillerSearches(browser, fillerCount, proxyApplied, `[${sessionLabel}] `).catch(() => ({ hadCaptcha: false }));
-    if (fillerResult.hadCaptcha && !fillerResult.solved) {
-      console.log(`[${sessionLabel}] ⚠ Filler captcha çözülemedi → session erken kapatılıyor`);
-      try { browser.disconnect(); await closeBrowser(profileId); } catch {}
-      failedProfiles.set(profileId, { time: Date.now(), failure: true });
-      stats.completed++;
-      stats.totalFailed++;
-      return { clicked: 0, hits: 0, adsFound: 0 };
-    }
-  }
-
-  // Passive mod
-  if (process.argv.includes("--passive")) {
-    console.log(`[${sessionLabel}] PASSIVE MODE — manuel arama yap, Ctrl+C ile çık`);
-    await new Promise(() => {});
-  }
+  // NOT: Click session'da cookie temizleme YOK — warmup'tan kalan cookies kullanılır.
 
   const sessionQueries = shuffle([...parsedQueries]);
   let sessionAdsFound = 0;
   let sessionClicked = 0;
   let sessionHits = 0;
   const sessionRankings = [];
-  const sessionAdClicks = {}; // domain bazlı session tıklama sayacı
+  const sessionAdClicks = {};
 
   for (let qi = 0; qi < sessionQueries.length; qi++) {
     const q = sessionQueries[qi];
@@ -163,37 +174,19 @@ async function runSession(profile, parsedQueries, budgetTracker) {
       continue;
     }
 
-    // Captcha veya connection error → browser kapat, yeni IP ile tekrar dene (max 3 retry)
-    const needsRetry = (r) => r && (r.error === "bot_detected" || r.error === "search_failed");
-    if (needsRetry(result) && qi === 0) {
-      for (let retry = 1; retry <= 3; retry++) {
-        const reason = result.error === "bot_detected" ? "Captcha" : "Bağlantı hatası";
-        console.log(`[${sessionLabel}] ⚠ ${reason} — yeni IP deneniyor (${retry}/3)...`);
-        try { browser.disconnect(); await closeBrowser(profileId); } catch {}
-        await sleep(2000);
-        const newProxy = await applyStickyProxy(profileId).catch(() => null);
-        if (newProxy) proxyApplied = newProxy;
-        try {
-          const { wsEndpoint } = await openBrowser(profileId);
-          browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
-          await closeExtraTabs(browser);
-          result = await searchAndClick(browser, q.search, q.adDomains, q.hitDomains, sessionLabel, sessionAdClicks, budgetTracker, proxyApplied);
-          if (!needsRetry(result)) break;
-        } catch (e) {
-          console.log(`[${sessionLabel}] Retry ${retry} başarısız: ${e.message.split("\n")[0]}`);
-        }
-      }
-    }
-
     if (result && result.totalAdsOnPage > 0) sessionAdsFound += result.totalAdsOnPage;
     if (result && result.hits > 0) sessionHits += result.hits;
     if (result && result.ads > 0) sessionClicked += result.ads;
     if (result && result.rankings) sessionRankings.push({ query: q.search, rankings: result.rankings, notFound: result.notFound || [] });
 
-    if (needsRetry(result)) {
-      const reason = result.error === "bot_detected" ? "captcha" : "bağlantı hatası";
-      console.log(`[${sessionLabel}] ⚠ 3 retry sonrası hala ${reason} — session atlanıyor`);
-      failedProfiles.set(profileId, { time: Date.now(), failure: true });
+    if (result && result.error === "bot_detected") {
+      console.log(`[${sessionLabel}] ⚠ Captcha (captcha_action=abort) — session terk`);
+      captchaHit = true;
+      sessionFailureFlag = true;
+      break;
+    }
+    if (result && result.error === "search_failed") {
+      console.log(`[${sessionLabel}] ⚠ Bağlantı hatası — session terk`);
       sessionFailureFlag = true;
       break;
     }
@@ -203,31 +196,28 @@ async function runSession(profile, parsedQueries, budgetTracker) {
     await sleep(wait * 1000);
   }
 
+  // KESINLIKLE çalışmalı — full cookie wipe
   try {
-    browser.disconnect();
-    await closeBrowser(profileId);
-  } catch {}
-
-  // Cooldown — failure varsa zaten set edildi, success'i overwrite etme
-  if (!sessionFailureFlag) {
-    failedProfiles.set(profileId, { time: Date.now(), failure: false });
+    await clearAllGoogleCookies(browser);
+  } catch (e) {
+    console.log(`[${sessionLabel}] ✗ Cookie wipe hatası: ${e.message.split("\n")[0]}`);
   }
 
-  // Session anında stats'a kaydet (Ctrl+C anında doğru sayım için)
+  try { browser.disconnect(); await closeBrowser(profileId); } catch {}
+
+  profileState.transition(profileId, "cooling", { failure: captchaHit });
+
   stats.completed++;
   if (sessionClicked === 0) stats.totalFailed++;
 
   const updated = tracker.recordSession(profileId, sessionAdsFound);
-  console.log(`[${sessionLabel}] Bitti | tıklanan: ${sessionClicked} | reklam: ${sessionAdsFound} | no_ads_streak: ${updated.no_ads_streak}`);
+  console.log(`[${sessionLabel}] CLICK bitti | tıklanan: ${sessionClicked} | reklam: ${sessionAdsFound}${captchaHit ? " | captcha" : ""}`);
 
-  // Hit domain sıralama özeti
   if (sessionRankings.length > 0) {
     console.log(`[${sessionLabel}] === Hit domain sıralamaları ===`);
     for (const sr of sessionRankings) {
-      if (sr.rankings.length > 0) {
-        for (const r of sr.rankings) {
-          console.log(`[${sessionLabel}]   "${sr.query}" → ${r.domain}: Sayfa ${r.page}, Sıra ${r.position} (genel: ${r.globalPosition})`);
-        }
+      for (const r of sr.rankings) {
+        console.log(`[${sessionLabel}]   "${sr.query}" → ${r.domain}: Sayfa ${r.page}, Sıra ${r.position} (genel: ${r.globalPosition})`);
       }
       for (const nf of sr.notFound) {
         console.log(`[${sessionLabel}]   "${sr.query}" → ${nf}: bulunamadı`);
@@ -235,7 +225,6 @@ async function runSession(profile, parsedQueries, budgetTracker) {
     }
   }
 
-  // Domain başına kümülatif tıklama (tüm runlar boyunca)
   const totals = clickCounter.getAll();
   const domains = Object.keys(totals);
   if (domains.length > 0) {
@@ -298,9 +287,6 @@ async function run() {
   let lastActivitySnapshot = stats.totalClicked + stats.totalHits;
   const SESSION_TIMEOUT = (config.behavior.session_timeout_minutes || 15) * 60 * 1000;
 
-  // Continuous queue: ana loop sequential, sessionlar paralel
-  const active = new Map(); // promise -> profileId
-
   function shouldStop() {
     // Reklam + organik tıklamalar anlık güncelleniyor — değişimi izle
     const totalActivity = stats.totalClicked + stats.totalHits;
@@ -331,71 +317,87 @@ async function run() {
     return false;
   }
 
-  function launchSession(profile) {
-    if (active.size >= browserCount) return; // Slot kontrolü
-    console.log(`▶ Session başlıyor: #${profile.serial || profile.id} | aktif: ${active.size + 1}/${browserCount}`);
-    let cleaned = false;
-    const sessionPromise = (async () => {
+  const profileState = createProfileStateManager({
+    stateFile: path.join(__dirname, "..", "profile-state.json"),
+    successCooldownMs: (config.behavior.post_click_cooldown_minutes || 5) * 60 * 1000,
+    failureCooldownMs: (config.behavior.captcha_failure_cooldown_minutes || 15) * 60 * 1000,
+  });
+
+  const active = new Map(); // promise -> profileId
+
+  function hasPendingTargets() {
+    if (!budgetTracker) return true;
+    const allTargets = [...new Set(parsedQueries.flatMap((q) => q.adDomains))];
+    return !budgetTracker.allTargetsExhausted(allTargets);
+  }
+
+  function launchTask() {
+    if (active.size >= browserCount) return false;
+
+    const activeIds = new Set(active.values());
+    const candidateProfiles = profiles.filter((p) => !activeIds.has(p.id)).map((p) => p.id);
+    const decision = profileState.selectNextTask(candidateProfiles, hasPendingTargets());
+    if (!decision) return false;
+
+    const profile = profiles.find((p) => p.id === decision.profileId);
+    if (!profile) return false;
+
+    console.log(`▶ ${decision.type.toUpperCase()} başlıyor: #${profile.serial || profile.id} | aktif: ${active.size + 1}/${browserCount}`);
+    const taskPromise = (async () => {
       try {
-        return await Promise.race([
-          runSession(profile, parsedQueries, budgetTracker),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Session timeout (8dk)")), SESSION_TIMEOUT)),
-        ]);
+        if (decision.type === "warmup") {
+          return await Promise.race([
+            runWarmupSession(profile, profileState),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Warmup timeout (8dk)")), SESSION_TIMEOUT)),
+          ]);
+        } else {
+          return await Promise.race([
+            runClickSession(profile, profileState, parsedQueries, budgetTracker),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Click timeout (15dk)")), SESSION_TIMEOUT)),
+          ]);
+        }
       } catch (e) {
-        console.error(`Session hatası (#${profile.serial || profile.id}): ${e.message.split("\n")[0]} — atlanıyor`);
-        // Profili failure cooldown'a al (sonsuz retry önle)
-        failedProfiles.set(profile.id, { time: Date.now(), failure: true });
+        console.error(`Task hatası (#${profile.serial || profile.id}): ${e.message.split("\n")[0]}`);
+        profileState.transition(profile.id, "cold", { failure: true });
         try { await closeBrowser(profile.id); } catch {}
-        return { clicked: 0, hits: 0, adsFound: 0 };
+        return { error: e.message };
       }
     })();
-    active.set(sessionPromise, profile.id);
-    sessionPromise.then((r) => {
-      if (cleaned) return;
-      cleaned = true;
+    active.set(taskPromise, profile.id);
+    taskPromise.then((r) => {
       if (r && (r.clicked > 0 || (r.hits || 0) > 0)) lastClickTime = Date.now();
-      active.delete(sessionPromise);
-      console.log(`◀ Session bitti: #${profile.serial || profile.id} | aktif: ${active.size}`);
+      active.delete(taskPromise);
+      console.log(`◀ Task bitti: #${profile.serial || profile.id} | aktif: ${active.size}`);
     });
+    return true;
   }
 
-  // İlk batch: browser_count kadar session başlat (stagger ile)
+  // İlk batch (stagger ile)
   for (let i = 0; i < browserCount; i++) {
     if (shouldStop()) break;
-    if (i > 0) await sleep(3000 + Math.random() * 3000); // 3-6s stagger
+    if (i > 0) await sleep(3000 + Math.random() * 3000);
     await resetIfNeeded(profiles);
-    const activeIds = new Set(active.values());
-    const [profile] = pickProfiles(profiles, 1, activeIds);
-    if (!profile) break;
-    launchSession(profile);
+    if (!launchTask()) break;
   }
 
-  // Continuous queue: periyodik slot kontrolü (her 30s veya bir session bittiğinde)
+  // Continuous queue
   while (!shouldStop()) {
-    // Boş slot varsa doldur
     while (active.size < browserCount && !shouldStop()) {
-      await sleep(2000 + Math.random() * 2000); // 2-4s aralık
+      await sleep(2000 + Math.random() * 2000);
       await resetIfNeeded(profiles);
-      const activeIds = new Set(active.values());
-    const [profile] = pickProfiles(profiles, 1, activeIds);
-      if (!profile) break;
-      launchSession(profile);
+      if (!launchTask()) break;
     }
-
     if (active.size === 0) {
       await sleep(5000);
       continue;
     }
-
-    // Bir session bitene kadar bekle (max 30s — asılı kalanlar için periyodik kontrol)
     await Promise.race([
       Promise.race([...active.keys()]),
       sleep(30000),
     ]);
   }
 
-  // Kalan session'ları bekle
-  console.log(`\nDurma sinyali, kalan ${active.size} session bekleniyor...`);
+  console.log(`\nDurma sinyali, kalan ${active.size} task bekleniyor...`);
   await Promise.allSettled([...active.keys()]);
 
   if (!summaryPrinted) {

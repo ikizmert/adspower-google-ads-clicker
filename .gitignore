@@ -18,3 +18,6 @@ screenshots/
 
 # Adaptive tracker runtime state
 budget-state.json
+
+# Profile state machine runtime (her runda değişir)
+profile-state.json

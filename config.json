@@ -2,23 +2,18 @@
   "provider": "adspower",
   "adspower": {
     "api_url": "http://local.adspower.net:50325",
-    "pilot_profile_id": ""
+    "pilot_profile_id": "k1c85tdt"
   },
-  "capsolver_api_key": "",
-  "proxy_rotation": {
-    "enabled": true,
-    "providers": [
-      {
-        "name": "aproxy",
-        "weight": 70,
-        "type": "http",
-        "host": "gw.aproxy.com",
-        "port": "2312",
-        "base_user": "ap-fcfvp9r45zxh",
-        "password": "",
-        "cities": ["AYDIN", "IZMIR", "MUGLA", "ANTALYA", "ISTANBUL", "BURSA", "ANKARA"]
-      }
-    ]
+  "hyperbrowser": {
+    "api_key": "hb_6fb5fb0de30a75c2b9f55f6a0885"
+  },
+  "capsolver_api_key": "CAP-B54662C5996751A4857C5E663AE18CE1EC409735391B56C1919F4845C8074CD6",
+  "proxy": {
+    "type": "http",
+    "host": "gw.aproxy.com",
+    "port": "2312",
+    "base_user": "ap-fcfvp9r45zxh_area-TR_life-30",
+    "password": "JEMKLwMO5Sa63ly1"
   },
   "behavior": {
     "mode": "model_1",

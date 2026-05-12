@@ -28,7 +28,7 @@
     "warmup_enabled": true,
     "post_click_cooldown_minutes": 5,
     "captcha_failure_cooldown_minutes": 15,
-    "rotate_proxy_between_phases": true,
+    "rotate_proxy_between_phases": false,
     "filler_queries_per_session": 2,
     "max_clicks_per_domain_per_session": 3,
     "max_pages_for_ads": 3,

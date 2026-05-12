@@ -12,7 +12,7 @@
     "type": "http",
     "host": "gw.aproxy.com",
     "port": "2312",
-    "base_user": "ap-fcfvp9r45zxh_area-TR_life-30",
+    "base_user": "ap-fcfvp9r45zxh_area-TR_life-120",
     "password": "JEMKLwMO5Sa63ly1"
   },
   "behavior": {
@@ -23,7 +23,7 @@
     "warmup_enabled": true,
     "post_click_cooldown_minutes": 5,
     "captcha_failure_cooldown_minutes": 15,
-    "rotate_proxy_between_phases": true,
+    "rotate_proxy_between_phases": false,
     "filler_queries_per_session": 2,
     "max_clicks_per_domain_per_session": 3,
     "max_pages_for_ads": 3,
@@ -35,7 +35,7 @@
     "max_total_clicks": 0,
     "idle_timeout_minutes": 5,
     "session_timeout_minutes": 15,
-    "block_images": false,
+    "block_images": true,
     "headless": false,
     "check_shopping_ads": true,
     "adaptive_targeting": { "enabled": false, "missed_threshold": 15 }

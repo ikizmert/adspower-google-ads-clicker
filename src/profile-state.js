@@ -29,6 +29,7 @@ function createProfileStateManager({ stateFile, successCooldownMs, failureCooldo
         cooldownUntil: 0,
         warmupCount: 0,
         clickCount: 0,
+        currentSid: null,
       };
     }
     return data.profiles[profileId];
@@ -100,11 +101,21 @@ function createProfileStateManager({ stateFile, successCooldownMs, failureCooldo
     return null;
   }
 
+  function setSid(profileId, sid) {
+    const p = ensure(profileId);
+    p.currentSid = sid;
+    atomicWrite(stateFile, data);
+  }
+
+  function getSid(profileId) {
+    return ensure(profileId).currentSid;
+  }
+
   function save() {
     atomicWrite(stateFile, data);
   }
 
-  return { getState, save, transition, tick, selectNextTask, isAvailable };
+  return { getState, save, transition, tick, selectNextTask, isAvailable, setSid, getSid };
 }
 
 module.exports = { createProfileStateManager, VALID_STATES };

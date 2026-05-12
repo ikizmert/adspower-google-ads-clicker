@@ -83,7 +83,10 @@ async function runWarmupSession(profile, profileState) {
 
   profileState.transition(profileId, "warming");
 
-  await applyStickyProxy(profileId).catch(() => null);
+  const proxyApplied = await applyStickyProxy(profileId).catch(() => null);
+  if (proxyApplied && proxyApplied.sid) {
+    profileState.setSid(profileId, proxyApplied.sid);
+  }
 
   let browser;
   try {
@@ -135,10 +138,9 @@ async function runClickSession(profile, profileState, parsedQueries, budgetTrack
 
   profileState.transition(profileId, "clicking");
 
-  // Warmup'tan farklı IP almak için yeni sticky session (config flag varsa)
-  let proxyApplied = config.behavior.rotate_proxy_between_phases !== false
-    ? await applyStickyProxy(profileId).catch(() => null)
-    : null;
+  // Warmup'ta üretilen aynı sid'i kullan — IP cookie ile eşleşsin (captcha önle)
+  const storedSid = profileState.getSid(profileId);
+  let proxyApplied = await applyStickyProxy(profileId, storedSid).catch(() => null);
 
   let browser;
   try {

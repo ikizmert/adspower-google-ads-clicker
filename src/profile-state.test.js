@@ -154,3 +154,21 @@ test("selectNextTask: allowedTypes=['warmup'] → warm profil olsa bile warmup s
   assert.ok(["p2", "p3"].includes(decision.profileId));
   fs.unlinkSync(file);
 });
+
+test("setSid + getSid: sid persist eder", () => {
+  const file = tmpFile();
+  const mgr = createProfileStateManager({ stateFile: file, successCooldownMs: 1000, failureCooldownMs: 2000 });
+  assert.equal(mgr.getSid("p1"), null);
+  mgr.setSid("p1", "ABCD1234");
+  assert.equal(mgr.getSid("p1"), "ABCD1234");
+  fs.unlinkSync(file);
+});
+
+test("setSid: yeni sid eski sid'i overwrite eder", () => {
+  const file = tmpFile();
+  const mgr = createProfileStateManager({ stateFile: file, successCooldownMs: 1000, failureCooldownMs: 2000 });
+  mgr.setSid("p1", "FIRST");
+  mgr.setSid("p1", "SECOND");
+  assert.equal(mgr.getSid("p1"), "SECOND");
+  fs.unlinkSync(file);
+});

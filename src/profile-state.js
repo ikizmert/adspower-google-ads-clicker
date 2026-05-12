@@ -82,16 +82,20 @@ function createProfileStateManager({ stateFile, successCooldownMs, failureCooldo
     return true;
   }
 
-  function selectNextTask(profileIds, hasPendingTargets) {
+  function selectNextTask(profileIds, hasPendingTargets, allowedTypes = ["click", "warmup"]) {
     tick();
-    const warmProfile = profileIds.find((id) => ensure(id).state === "warm" && isAvailable(id));
-    if (warmProfile && hasPendingTargets) {
-      return { type: "click", profileId: warmProfile };
-    }
     if (!hasPendingTargets) return null;
-    const coldProfile = profileIds.find((id) => ensure(id).state === "cold" && isAvailable(id));
-    if (coldProfile) {
-      return { type: "warmup", profileId: coldProfile };
+    if (allowedTypes.includes("click")) {
+      const warmProfile = profileIds.find((id) => ensure(id).state === "warm" && isAvailable(id));
+      if (warmProfile) {
+        return { type: "click", profileId: warmProfile };
+      }
+    }
+    if (allowedTypes.includes("warmup")) {
+      const coldProfile = profileIds.find((id) => ensure(id).state === "cold" && isAvailable(id));
+      if (coldProfile) {
+        return { type: "warmup", profileId: coldProfile };
+      }
     }
     return null;
   }

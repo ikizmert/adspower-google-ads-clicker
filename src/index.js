@@ -4,7 +4,7 @@ puppeteer.use(StealthPlugin());
 const { config, queries, parseQuery } = require("./config");
 const provider = config.provider === "hyperbrowser" ? require("./hyperbrowser") : require("./adspower");
 const { checkStatus, openBrowser, closeBrowser, listProfiles, applyStickyProxy } = provider;
-const { searchAndClick, closeExtraTabs, enableImageBlocking, clearAllGoogleCookies, sessionWarmup } = require("./searcher");
+const { searchAndClick, closeExtraTabs, enableImageBlocking, clearAllGoogleCookies, sessionWarmup, doFillerSearches } = require("./searcher");
 const { createProfileStateManager } = require("./profile-state");
 const tracker = require("./profile-tracker");
 const clickCounter = require("./click-counter");
@@ -156,6 +156,22 @@ async function runClickSession(profile, profileState, parsedQueries, budgetTrack
   await closeExtraTabs(browser);
   // NOT: Click session'da cookie temizleme YOK — warmup'tan kalan cookies kullanılır.
 
+  // Filler aramalar — target query'lerden önce 1-2 alakasız Google araması + organik tıklama
+  // (Google session'da "doğal kullanıcı davranışı" sinyali)
+  const fillerCount = config.behavior.filler_queries_per_session || 0;
+  if (fillerCount > 0) {
+    const fillerResult = await doFillerSearches(browser, fillerCount, proxyApplied, `[${sessionLabel}] `).catch(() => ({ hadCaptcha: false }));
+    if (fillerResult.hadCaptcha && !fillerResult.solved) {
+      console.log(`[${sessionLabel}] ⚠ Filler captcha (captcha_action=abort) — session terk`);
+      try { await clearAllGoogleCookies(browser); } catch {}
+      try { browser.disconnect(); await closeBrowser(profileId); } catch {}
+      profileState.transition(profileId, "cooling", { failure: true });
+      stats.completed++;
+      stats.totalFailed++;
+      return { clicked: 0, hits: 0, adsFound: 0 };
+    }
+  }
+
   // Passive mod — manuel debug için browser açık tut
   if (process.argv.includes("--passive")) {
     console.log(`[${sessionLabel}] PASSIVE MODE — manuel arama yap, Ctrl+C ile çık`);
@@ -266,7 +282,9 @@ async function run() {
     console.log(`Tek profil modu: #${cliSerial}`);
   }
 
-  const browserCount = cliSerial ? 1 : (config.behavior.browser_count || 1);
+  const clickBrowserCount = cliSerial ? 1 : (config.behavior.click_browser_count || 5);
+  const warmupBrowserCount = cliSerial ? 0 : (config.behavior.warmup_browser_count || 5);
+  const totalSlots = clickBrowserCount + warmupBrowserCount;
   const maxRun = cliSerial ? 1 : config.behavior.max_run;
   const maxTotalClicks = config.behavior.max_total_clicks || 0;
   const idleTimeoutMs = (config.behavior.idle_timeout_minutes || 0) * 60 * 1000;
@@ -280,7 +298,7 @@ async function run() {
   }) : null;
 
   const unlimited = !maxRun || maxRun <= 0;
-  console.log(`Profil: ${profiles.length} | Paralel: ${browserCount} | Session: ${unlimited ? "sınırsız" : maxRun}` +
+  console.log(`Profil: ${profiles.length} | Click: ${clickBrowserCount} | Warmup: ${warmupBrowserCount} | Session: ${unlimited ? "sınırsız" : maxRun}` +
     (maxTotalClicks ? ` | Max tıklama: ${maxTotalClicks}` : "") +
     (idleTimeoutMs ? ` | Idle timeout: ${config.behavior.idle_timeout_minutes}dk` : ""));
   console.log(`Query: ${parsedQueries.length} | Bekleme: ${config.behavior.ad_page_min_wait}-${config.behavior.ad_page_max_wait}s\n`);
@@ -326,7 +344,16 @@ async function run() {
     failureCooldownMs: (config.behavior.captcha_failure_cooldown_minutes || 15) * 60 * 1000,
   });
 
-  const active = new Map(); // promise -> profileId
+  const active = new Map(); // promise -> { profileId, type }
+
+  function activeCounts() {
+    let click = 0, warmup = 0;
+    for (const { type } of active.values()) {
+      if (type === "click") click++;
+      else if (type === "warmup") warmup++;
+    }
+    return { click, warmup };
+  }
 
   function hasPendingTargets() {
     if (!budgetTracker) return true;
@@ -335,14 +362,20 @@ async function run() {
   }
 
   function launchTask() {
-    if (active.size >= browserCount) return false;
+    if (active.size >= totalSlots) return false;
 
-    const activeIds = new Set(active.values());
+    const counts = activeCounts();
+    const allowedTypes = [];
+    if (counts.click < clickBrowserCount) allowedTypes.push("click");
+    if (counts.warmup < warmupBrowserCount) allowedTypes.push("warmup");
+    if (allowedTypes.length === 0) return false;
+
+    const activeIds = new Set([...active.values()].map(v => v.profileId));
     const candidateProfiles = profiles.filter((p) => !activeIds.has(p.id)).map((p) => p.id);
-    const decision = profileState.selectNextTask(candidateProfiles, hasPendingTargets());
+    const decision = profileState.selectNextTask(candidateProfiles, hasPendingTargets(), allowedTypes);
     if (!decision) return false;
 
-    // warmup_enabled flag — warmup'ı devre dışı bırakmak için (test/debug için)
+    // warmup_enabled flag — devre dışı bırakmak için
     if (decision.type === "warmup" && config.behavior.warmup_enabled === false) {
       return false;
     }
@@ -350,7 +383,8 @@ async function run() {
     const profile = profiles.find((p) => p.id === decision.profileId);
     if (!profile) return false;
 
-    console.log(`▶ ${decision.type.toUpperCase()} başlıyor: #${profile.serial || profile.id} | aktif: ${active.size + 1}/${browserCount}`);
+    console.log(`▶ ${decision.type.toUpperCase()} başlıyor: #${profile.serial || profile.id} | click: ${counts.click + (decision.type === "click" ? 1 : 0)}/${clickBrowserCount} warmup: ${counts.warmup + (decision.type === "warmup" ? 1 : 0)}/${warmupBrowserCount}`);
+
     const taskPromise = (async () => {
       try {
         if (decision.type === "warmup") {
@@ -371,12 +405,11 @@ async function run() {
         return { error: e.message };
       }
     })();
-    active.set(taskPromise, profile.id);
+    active.set(taskPromise, { profileId: profile.id, type: decision.type });
     taskPromise.then((r) => {
-      // Click activity OR successful warmup updates lastClickTime
       if (r && (r.clicked > 0 || (r.hits || 0) > 0 || r.success === true)) lastClickTime = Date.now();
       active.delete(taskPromise);
-      console.log(`◀ Task bitti: #${profile.serial || profile.id} | aktif: ${active.size}`);
+      console.log(`◀ ${decision.type.toUpperCase()} bitti: #${profile.serial || profile.id} | aktif: ${active.size}`);
     }).catch(() => {
       active.delete(taskPromise);
     });
@@ -384,7 +417,7 @@ async function run() {
   }
 
   // İlk batch (stagger ile)
-  for (let i = 0; i < browserCount; i++) {
+  for (let i = 0; i < totalSlots; i++) {
     if (shouldStop()) break;
     if (i > 0) await sleep(3000 + Math.random() * 3000);
     await resetIfNeeded(profiles);
@@ -393,7 +426,7 @@ async function run() {
 
   // Continuous queue
   while (!shouldStop()) {
-    while (active.size < browserCount && !shouldStop()) {
+    while (active.size < totalSlots && !shouldStop()) {
       await sleep(2000 + Math.random() * 2000);
       await resetIfNeeded(profiles);
       if (!launchTask()) break;

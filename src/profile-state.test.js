@@ -133,3 +133,24 @@ test("selectNextTask: busy state'ler skip edilir (warming, clicking)", () => {
   assert.equal(decision.profileId, "p3");
   fs.unlinkSync(file);
 });
+
+test("selectNextTask: allowedTypes=['click'] → warm profil yoksa null (warmup'a düşmez)", () => {
+  const file = tmpFile();
+  const mgr = createProfileStateManager({ stateFile: file, successCooldownMs: 1000, failureCooldownMs: 2000 });
+  // p1, p2 cold (default)
+  const decision = mgr.selectNextTask(["p1", "p2"], true, ["click"]);
+  assert.equal(decision, null);
+  if (fs.existsSync(file)) fs.unlinkSync(file);
+});
+
+test("selectNextTask: allowedTypes=['warmup'] → warm profil olsa bile warmup seçer", () => {
+  const file = tmpFile();
+  const mgr = createProfileStateManager({ stateFile: file, successCooldownMs: 1000, failureCooldownMs: 2000 });
+  mgr.transition("p1", "warming");
+  mgr.transition("p1", "warm");
+  // p2, p3 cold
+  const decision = mgr.selectNextTask(["p1", "p2", "p3"], true, ["warmup"]);
+  assert.equal(decision.type, "warmup");
+  assert.ok(["p2", "p3"].includes(decision.profileId));
+  fs.unlinkSync(file);
+});

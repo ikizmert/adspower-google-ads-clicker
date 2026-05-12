@@ -39,16 +39,34 @@ async function isCaptchaPage(page) {
 
   const hb = new Hyperbrowser({ apiKey: API_KEY });
   const hbCfg = config.hyperbrowser || {};
-  // Free plan'da solveCaptchas yok — config'den opt-in
+  // Free plan: solveCaptchas + hyperbrowser'ın kendi proxy havuzu kapalı.
+  // Ama external (bring-your-own) proxy serbest olabilir.
   const solveCaptchas = hbCfg.solve_captchas === true;
-  const useProxy = hbCfg.use_proxy !== false; // default true
-  console.log(`[hb-test] Session açılıyor (solveCaptchas=${solveCaptchas}, useProxy=${useProxy})...`);
+  const useProxy = hbCfg.use_proxy === true; // default false — paid feature
 
-  const session = await hb.sessions.create({
-    solveCaptchas,
-    useProxy,
-    adblock: false,
-  });
+  const sessionOpts = { solveCaptchas, useProxy, adblock: false };
+
+  // External proxy (config.proxy) — hyperbrowser'ın havuzunu kullanmıyorsan kendi proxy'ni gönder
+  let externalProxyInfo = "yok";
+  if (!useProxy && config.proxy && config.proxy.host) {
+    const randomSid = () => {
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+      let s = "";
+      for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
+      return s;
+    };
+    const sid = randomSid();
+    sessionOpts.proxy = {
+      type: config.proxy.type || "http",
+      server: `${config.proxy.host}:${config.proxy.port}`,
+      username: `${config.proxy.base_user}_session-${sid}`,
+      password: config.proxy.password,
+    };
+    externalProxyInfo = `${config.proxy.host} sid=${sid}`;
+  }
+  console.log(`[hb-test] Session açılıyor (solveCaptchas=${solveCaptchas}, useProxy=${useProxy}, externalProxy=${externalProxyInfo})...`);
+
+  const session = await hb.sessions.create(sessionOpts);
   console.log(`[hb-test] Session ID: ${session.id}`);
   if (session.liveUrl) console.log(`[hb-test] Live view: ${session.liveUrl}`);
 

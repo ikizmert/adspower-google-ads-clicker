@@ -38,11 +38,15 @@ async function isCaptchaPage(page) {
   console.log(`[hb-test] query: "${query}" | click: ${shouldClick}`);
 
   const hb = new Hyperbrowser({ apiKey: API_KEY });
-  console.log(`[hb-test] Session açılıyor (solveCaptchas=true, useProxy=true)...`);
+  const hbCfg = config.hyperbrowser || {};
+  // Free plan'da solveCaptchas yok — config'den opt-in
+  const solveCaptchas = hbCfg.solve_captchas === true;
+  const useProxy = hbCfg.use_proxy !== false; // default true
+  console.log(`[hb-test] Session açılıyor (solveCaptchas=${solveCaptchas}, useProxy=${useProxy})...`);
 
   const session = await hb.sessions.create({
-    solveCaptchas: true,
-    useProxy: true,
+    solveCaptchas,
+    useProxy,
     adblock: false,
   });
   console.log(`[hb-test] Session ID: ${session.id}`);

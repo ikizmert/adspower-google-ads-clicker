@@ -232,25 +232,29 @@ async function sessionWarmup(page, tag = "") {
 
 
 async function clearGoogleCookies(browser) {
-  // Sadece google.com domain'indeki cookie'leri sil (NID, 1P_JAR vb. IP referansları)
+  // Sadece IP'ye bağlı tracking cookie'leri sil — oturum cookie'lerini bırak
+  // NID, 1P_JAR: IP referanslı, silinince captcha tetiklenmiyor
+  // SOCS, CONSENT, SID, HSID, SSID: oturum/fingerprint, bırakılınca captcha yok
+  const TRACKING_COOKIES = ["NID", "1P_JAR", "__Secure-1PSID", "__Secure-3PSID", "APISID"];
   const pages = await browser.pages();
   if (pages.length === 0) return;
   const session = await pages[0].target().createCDPSession();
   try {
     const { cookies } = await session.send("Network.getAllCookies");
-    const googleCookies = cookies.filter((c) =>
-      c.domain.includes("google.com") || c.domain.includes(".google.")
+    const toDelete = cookies.filter((c) =>
+      (c.domain.includes("google.com") || c.domain.includes(".google.")) &&
+      TRACKING_COOKIES.includes(c.name)
     );
-    for (const c of googleCookies) {
+    for (const c of toDelete) {
       await session.send("Network.deleteCookies", {
         name: c.name,
         domain: c.domain,
         path: c.path,
       }).catch(() => {});
     }
-    console.log(`  ${googleCookies.length} Google cookie temizlendi`);
+    console.log(`  ${toDelete.length} tracking cookie temizlendi (${TRACKING_COOKIES.join(",")})`);
   } catch (e) {
-    console.log(`  ✗ Google cookie temizleme hatası: ${e.message.split("\n")[0]}`);
+    console.log(`  ✗ Cookie temizleme hatası: ${e.message.split("\n")[0]}`);
   }
   await session.detach().catch(() => {});
 }

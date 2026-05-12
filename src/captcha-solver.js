@@ -47,19 +47,17 @@ async function detectCaptchaInfo(page) {
 }
 
 async function createTask(info, proxy, tag = "") {
-  // Enterprise iframe görünce ReCaptchaV2TaskProxyless kullan (Enterprise task başarısız)
-  // Normal captcha için proxy ile ReCaptchaV2Task
-  const useProxyless = info.enterprise;
-  const taskType = useProxyless ? "ReCaptchaV2TaskProxyless" : "ReCaptchaV2Task";
-
-  const task = { type: taskType, websiteURL: info.websiteURL, websiteKey: info.sitekey };
-  if (!useProxyless) {
-    task.proxyType = (proxy.type || "http").toLowerCase();
-    task.proxyAddress = proxy.host;
-    task.proxyPort = parseInt(proxy.port, 10);
-    task.proxyLogin = proxy.login;
-    task.proxyPassword = proxy.password;
-  }
+  // Proxy ile çöz — aynı IP'den token üretilsin (IP mismatch önle)
+  const task = {
+    type: "ReCaptchaV2Task",
+    websiteURL: info.websiteURL,
+    websiteKey: info.sitekey,
+    proxyType: (proxy.type || "http").toLowerCase(),
+    proxyAddress: proxy.host,
+    proxyPort: parseInt(proxy.port, 10),
+    proxyLogin: proxy.login,
+    proxyPassword: proxy.password,
+  };
   if (info.anchor) task.anchor = info.anchor;
   if (info.reload) task.reload = info.reload;
   const body = { clientKey: config.capsolver_api_key, task };
@@ -105,36 +103,49 @@ async function pollResult(taskId, maxWaitMs = 120000) {
   throw new Error("CapSolver timeout");
 }
 
-async function injectAndSubmit(page, token) {
-  await page.evaluate((tok) => {
-    // 1. g-recaptcha-response textarea'larına token yaz
-    document.querySelectorAll('textarea[name="g-recaptcha-response"], #g-recaptcha-response').forEach((t) => {
-      t.value = tok;
-      t.style.display = "block";
-      t.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+async function injectAndSubmit(page, token, tag = "") {
+  // Fetch ile form submit — browser cookie'leri dahil, redirect URL'ini yakala
+  const result = await page.evaluate(async (tok) => {
+    try {
+      const form = document.getElementById('captcha-form') || document.querySelector('form');
+      if (!form) return { ok: false, reason: "no-form" };
 
-    // 2. data-callback attribute'undaki callback'i çağır (Google /sorry'nin submit yolu)
-    const recaptchaDiv = document.querySelector('[data-callback]');
-    if (recaptchaDiv) {
-      const cbName = recaptchaDiv.getAttribute('data-callback');
-      if (cbName && typeof window[cbName] === "function") {
-        try { window[cbName](tok); return; } catch {}
-      }
+      const formData = new FormData(form);
+      formData.set('g-recaptcha-response', tok);
+
+      const res = await fetch('https://www.google.com/sorry/index', {
+        method: 'POST',
+        body: formData,
+        credentials: 'include',
+      });
+      return { ok: true, url: res.url, status: res.status };
+    } catch (e) {
+      return { ok: false, reason: e.message };
     }
+  }, token).catch((e) => ({ ok: false, reason: e.message }));
 
-    // 3. Submit butonu — önce spesifik ID, sonra genel
-    const submitBtn = document.querySelector(
-      '#captcha-form-submit-button, button[type="submit"], input[type="submit"], form button'
-    );
-    if (submitBtn) { submitBtn.click(); return; }
+  console.log(`${tag}📋 Fetch result: ${JSON.stringify(result)}`);
 
-    // 4. Son çare: form.submit()
-    const form = document.querySelector("form");
-    if (form) form.submit();
-  }, token).catch(() => {});
-
-  await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+  if (result && result.ok && result.url && !result.url.includes('/sorry')) {
+    // Token kabul edildi — browser'ı redirect URL'ine yönlendir
+    await page.goto(result.url, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+  } else {
+    // Fallback: form.submit() ile dene
+    await page.evaluate((tok) => {
+      const form = document.getElementById('captcha-form') || document.querySelector('form');
+      if (!form) return;
+      let f = form.querySelector('textarea[name="g-recaptcha-response"]');
+      if (!f) {
+        f = document.createElement('textarea');
+        f.name = 'g-recaptcha-response';
+        f.style.display = 'none';
+        form.appendChild(f);
+      }
+      f.value = tok;
+      form.submit();
+    }, token).catch(() => {});
+    await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => {});
+  }
 }
 
 async function solveCaptcha(page, proxyApplied, tag = "") {
@@ -165,7 +176,7 @@ async function solveCaptcha(page, proxyApplied, tag = "") {
     }
     console.log(`${tag}🔑 Sitekey: ${info.sitekey.substring(0, 30)}... (enterprise=${info.enterprise}, anchor=${info.anchor ? "var" : "yok"})`);
 
-    console.log(`${tag}📤 CapSolver task gönderiliyor (type=${info.enterprise ? "Proxyless" : "Proxy"})...`);
+    console.log(`${tag}📤 CapSolver task gönderiliyor (Proxy, enterprise=${info.enterprise})...`);
     const taskId = await createTask(info, proxy, tag);
     console.log(`${tag}🆔 TaskID: ${taskId}`);
 
@@ -173,7 +184,7 @@ async function solveCaptcha(page, proxyApplied, tag = "") {
     const token = await pollResult(taskId);
     console.log(`${tag}🎫 Token alındı (${token.length} karakter)`);
 
-    await injectAndSubmit(page, token);
+    await injectAndSubmit(page, token, tag);
     await sleep(2000);
 
     const url = page.url();

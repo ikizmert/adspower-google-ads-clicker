@@ -126,8 +126,10 @@ async function runSession(profile, parsedQueries, budgetTracker) {
 
   await closeExtraTabs(browser);
 
-  // Storage temizle (Model 0: her session disposable)
-  await clearAllStorage(browser).catch(() => {});
+  // Session başında tracking cookie'leri temizle
+  if (config.behavior.new_session_clear_google_cookies) {
+    await clearGoogleCookies(browser).catch(() => {});
+  }
 
   // Filler aramalar — Model 0: her session başında 1-2 alakasız sorgu
   const fillerCount = config.behavior.filler_queries_per_session || 0;
@@ -204,11 +206,6 @@ async function runSession(profile, parsedQueries, budgetTracker) {
     const wait = (5 + Math.random() * 10) * config.behavior.wait_factor;
     console.log(`[${sessionLabel}] ${wait.toFixed(1)}s bekleniyor...\n`);
     await sleep(wait * 1000);
-  }
-
-  // Session bitti — cookie temizle (sonraki açılışta temiz başlasın)
-  if (config.behavior.new_session_clear_google_cookies) {
-    try { await clearGoogleCookies(browser); } catch {}
   }
 
   try {

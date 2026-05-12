@@ -22,8 +22,11 @@ async function runOneSession(provider, queryDef, sessionLabel) {
     sessionInfo = await provider.openBrowser(profileId);
     browser = await puppeteer.connect({ browserWSEndpoint: sessionInfo.wsEndpoint });
   } catch (e) {
-    console.error(`[${sessionLabel}] Session açılamadı: ${e.message.split("\n")[0]}`);
-    return { clicked: 0, hits: 0, adsFound: 0, error: "open_failed" };
+    const msg = e.message.split("\n")[0];
+    console.error(`[${sessionLabel}] Session açılamadı: ${msg}`);
+    // Hyperbrowser concurrency limit (free plan = 1) — runner'a sinyal
+    const limitReached = /maximum number of active sessions/i.test(msg);
+    return { clicked: 0, hits: 0, adsFound: 0, error: limitReached ? "concurrency_limit" : "open_failed" };
   }
 
   let result = null;
@@ -94,6 +97,7 @@ async function runModel2(provider, parsedQueries) {
   let sessionCounter = 0;
 
   const active = new Map();
+  let concurrencyBackoffUntil = 0; // Hyperbrowser limit yedikten sonra backoff
 
   function shouldStop() {
     const totalActivity = stats.totalClicked + stats.totalHits;
@@ -117,6 +121,7 @@ async function runModel2(provider, parsedQueries) {
   function launchSession() {
     if (active.size >= concurrency) return false;
     if (parsedQueries.length === 0) return false;
+    if (Date.now() < concurrencyBackoffUntil) return false;
 
     const queryDef = parsedQueries[Math.floor(Math.random() * parsedQueries.length)];
     sessionCounter++;
@@ -130,6 +135,10 @@ async function runModel2(provider, parsedQueries) {
     active.set(promise, sessionLabel);
     promise.then((r) => {
       if (r && (r.clicked > 0 || (r.hits || 0) > 0)) lastClickTime = Date.now();
+      if (r && r.error === "concurrency_limit") {
+        concurrencyBackoffUntil = Date.now() + 15000; // 15s sessiz bekle, sonra tekrar
+        console.log(`⚠ Hyperbrowser concurrency limit — 15s yeni session açma`);
+      }
       active.delete(promise);
       console.log(`◀ Session ${sessionLabel} | aktif: ${active.size}`);
     });

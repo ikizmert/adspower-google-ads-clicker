@@ -1,8 +1,14 @@
 {
-  "provider": "adspower",
+  "_provider_doc": "adspower = local AdsPower app, hyperbrowser = cloud sessions",
+  "provider": "hyperbrowser",
   "adspower": {
     "api_url": "http://local.adspower.net:50325",
     "pilot_profile_id": ""
+  },
+  "hyperbrowser": {
+    "api_key": "hb_YOUR_KEY_HERE",
+    "solve_captchas": true,
+    "use_proxy": false
   },
   "capsolver_api_key": "",
   "proxy_rotation": {
@@ -21,28 +27,36 @@
     ]
   },
   "behavior": {
-    "mode": "model_1",
+    "_mode_doc": "model_1 = AdsPower + warmup/click state machine, model_2 = Hyperbrowser cloud simple/aggressive (no warmup)",
+    "mode": "model_2",
+
+    "_model_2": "Aşağıdaki alanlar model_2 (hyperbrowser) için:",
+    "concurrency": 5,
+
+    "_model_1": "Aşağıdaki alanlar model_1 (AdsPower) için:",
     "click_browser_count": 5,
     "warmup_browser_count": 8,
-    "captcha_action": "abort",
     "warmup_enabled": true,
     "post_click_cooldown_minutes": 5,
     "captcha_failure_cooldown_minutes": 15,
     "rotate_proxy_between_phases": false,
     "filler_queries_per_session": 0,
-    "max_clicks_per_domain_per_session": 3,
+    "session_timeout_minutes": 15,
+    "adaptive_targeting": { "enabled": false, "missed_threshold": 15 },
+
+    "_shared": "Aşağıdaki alanlar her iki mod için ortak:",
+    "captcha_action": "abort",
+    "max_clicks_per_domain_per_session": 1,
     "max_pages_for_ads": 3,
-    "ad_page_min_wait": 8,
-    "ad_page_max_wait": 15,
+    "ad_page_min_wait": 20,
+    "ad_page_max_wait": 45,
     "wait_factor": 1.0,
     "screenshot_on_click": true,
     "max_run": 0,
     "max_total_clicks": 0,
     "idle_timeout_minutes": 5,
-    "session_timeout_minutes": 15,
     "block_images": false,
     "headless": false,
-    "check_shopping_ads": true,
-    "adaptive_targeting": { "enabled": false, "missed_threshold": 15 }
+    "check_shopping_ads": true
   }
 }

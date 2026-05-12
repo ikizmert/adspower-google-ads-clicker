@@ -19,31 +19,33 @@ async function checkStatus() {
   return !!API_KEY;
 }
 
+function randomSid() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let s = "";
+  for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+
 async function openBrowser(profileId) {
   const hb = getClient();
   const hbConfig = config.hyperbrowser || {};
   const sessionOpts = {
-    solveCaptchas: hbConfig.solve_captchas || false,
-    useProxy: hbConfig.use_proxy || false,
+    solveCaptchas: hbConfig.solve_captchas === true,
     adblock: false,
   };
 
-  // Kendi proxy config varsa ekle (Hyperbrowser proxy yerine)
+  // BYO external proxy — doğru SDK formatı: flat proxyServer/Username/Password + useProxy: true
+  // (Free plan'da useProxy: true bloklu, paid plan gerekli)
   if (config.proxy && config.proxy.host) {
-    const randomSid = () => {
-      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-      let s = "";
-      for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
-      return s;
-    };
     const sid = randomSid();
-    sessionOpts.proxy = {
-      type: config.proxy.type || "http",
-      server: `${config.proxy.host}:${config.proxy.port}`,
-      username: `${config.proxy.base_user}_session-${sid}`,
-      password: config.proxy.password,
-    };
-    console.log(`  Sticky proxy: sid=${sid}`);
+    const scheme = config.proxy.type || "http";
+    sessionOpts.useProxy = true;
+    sessionOpts.proxyServer = `${scheme}://${config.proxy.host}:${config.proxy.port}`;
+    sessionOpts.proxyServerUsername = `${config.proxy.base_user}_session-${sid}`;
+    sessionOpts.proxyServerPassword = config.proxy.password;
+    console.log(`  Sticky proxy (hyperbrowser BYO): sid=${sid}`);
+  } else {
+    sessionOpts.useProxy = hbConfig.use_proxy === true;
   }
 
   const session = await hb.sessions.create(sessionOpts);

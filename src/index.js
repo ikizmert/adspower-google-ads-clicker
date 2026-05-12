@@ -263,6 +263,24 @@ async function runClickSession(profile, profileState, parsedQueries, budgetTrack
 }
 
 async function run() {
+  // Model 2 (hyperbrowser simple/aggressive) — dispatch to dedicated runner
+  if (config.behavior && config.behavior.mode === "model_2") {
+    const { runModel2 } = require("./runner-model-2");
+    const alive = await checkStatus().catch(() => false);
+    if (!alive) {
+      console.error(`Provider çalışmıyor: ${config.provider}`);
+      process.exit(1);
+    }
+    const parsedQueries = queries.map(parseQuery);
+    if (parsedQueries.length === 0) {
+      console.error("queries.txt boş!");
+      process.exit(1);
+    }
+    await runModel2(provider, parsedQueries);
+    if (!summaryPrinted) { summaryPrinted = true; printSummary(); }
+    return;
+  }
+
   const alive = await checkStatus().catch(() => false);
   if (!alive) {
     console.error("AdsPower çalışmıyor! Önce AdsPower'ı başlatın.");

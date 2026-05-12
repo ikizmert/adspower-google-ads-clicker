@@ -157,6 +157,12 @@ async function runClickSession(profile, profileState, parsedQueries, budgetTrack
   await closeExtraTabs(browser);
   // NOT: Click session'da cookie temizleme YOK — warmup'tan kalan cookies kullanılır.
 
+  // Passive mod — manuel debug için browser açık tut
+  if (process.argv.includes("--passive")) {
+    console.log(`[${sessionLabel}] PASSIVE MODE — manuel arama yap, Ctrl+C ile çık`);
+    await new Promise(() => {});
+  }
+
   const sessionQueries = shuffle([...parsedQueries]);
   let sessionAdsFound = 0;
   let sessionClicked = 0;

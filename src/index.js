@@ -206,7 +206,7 @@ async function runClickSession(profile, profileState, parsedQueries, budgetTrack
   try {
     await clearAllGoogleCookies(browser);
   } catch (e) {
-    console.log(`[${sessionLabel}] ✗ Cookie wipe hatası: ${e.message.split("\n")[0]}`);
+    console.error(`[${sessionLabel}] ✗ Cookie wipe hatası: ${e.message.split("\n")[0]}`);
   }
 
   try { browser.disconnect(); await closeBrowser(profileId); } catch {}
@@ -354,12 +354,12 @@ async function run() {
         if (decision.type === "warmup") {
           return await Promise.race([
             runWarmupSession(profile, profileState),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("Warmup timeout (8dk)")), SESSION_TIMEOUT)),
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`Warmup timeout (${config.behavior.session_timeout_minutes || 15}dk)`)), SESSION_TIMEOUT)),
           ]);
         } else {
           return await Promise.race([
             runClickSession(profile, profileState, parsedQueries, budgetTracker),
-            new Promise((_, reject) => setTimeout(() => reject(new Error("Click timeout (15dk)")), SESSION_TIMEOUT)),
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`Click timeout (${config.behavior.session_timeout_minutes || 15}dk)`)), SESSION_TIMEOUT)),
           ]);
         }
       } catch (e) {

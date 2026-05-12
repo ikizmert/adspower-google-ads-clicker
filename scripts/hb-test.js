@@ -44,11 +44,12 @@ async function isCaptchaPage(page) {
   const solveCaptchas = hbCfg.solve_captchas === true;
   const useProxy = hbCfg.use_proxy === true; // default false — paid feature
 
-  const sessionOpts = { solveCaptchas, useProxy, adblock: false };
+  const sessionOpts = { solveCaptchas, adblock: false };
 
-  // External proxy (config.proxy) — hyperbrowser'ın havuzunu kullanmıyorsan kendi proxy'ni gönder
+  // BYO external proxy — doğru SDK formatı: flat proxyServer/Username/Password + useProxy: true
+  // (Free plan'da useProxy: true bloklu, paid plan gerekli)
   let externalProxyInfo = "yok";
-  if (!useProxy && config.proxy && config.proxy.host) {
+  if (config.proxy && config.proxy.host) {
     const randomSid = () => {
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let s = "";
@@ -56,15 +57,16 @@ async function isCaptchaPage(page) {
       return s;
     };
     const sid = randomSid();
-    sessionOpts.proxy = {
-      type: config.proxy.type || "http",
-      server: `${config.proxy.host}:${config.proxy.port}`,
-      username: `${config.proxy.base_user}_session-${sid}`,
-      password: config.proxy.password,
-    };
-    externalProxyInfo = `${config.proxy.host} sid=${sid}`;
+    const scheme = config.proxy.type || "http";
+    sessionOpts.useProxy = true;
+    sessionOpts.proxyServer = `${scheme}://${config.proxy.host}:${config.proxy.port}`;
+    sessionOpts.proxyServerUsername = `${config.proxy.base_user}_session-${sid}`;
+    sessionOpts.proxyServerPassword = config.proxy.password;
+    externalProxyInfo = `${sessionOpts.proxyServer} sid=${sid}`;
+  } else {
+    sessionOpts.useProxy = useProxy;
   }
-  console.log(`[hb-test] Session açılıyor (solveCaptchas=${solveCaptchas}, useProxy=${useProxy}, externalProxy=${externalProxyInfo})...`);
+  console.log(`[hb-test] Session açılıyor (solveCaptchas=${solveCaptchas}, externalProxy=${externalProxyInfo})...`);
 
   const session = await hb.sessions.create(sessionOpts);
   console.log(`[hb-test] Session ID: ${session.id}`);

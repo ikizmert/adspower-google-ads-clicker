@@ -231,6 +231,31 @@ async function sessionWarmup(page, tag = "") {
 
 
 
+async function clearAllGoogleCookies(browser) {
+  // Click session sonunda çağrılır — TÜM google.com cookies silinir
+  // (mevcut clearGoogleCookies sadece tracking cookies siliyordu)
+  const pages = await browser.pages();
+  if (pages.length === 0) return;
+  const session = await pages[0].target().createCDPSession();
+  try {
+    const { cookies } = await session.send("Network.getAllCookies");
+    const toDelete = cookies.filter((c) =>
+      c.domain.includes("google.com") || c.domain.includes(".google.")
+    );
+    for (const c of toDelete) {
+      await session.send("Network.deleteCookies", {
+        name: c.name,
+        domain: c.domain,
+        path: c.path,
+      }).catch(() => {});
+    }
+    console.log(`  ${toDelete.length} Google cookie temizlendi (full wipe)`);
+  } catch (e) {
+    console.log(`  ✗ clearAllGoogleCookies hatası: ${e.message.split("\n")[0]}`);
+  }
+  await session.detach().catch(() => {});
+}
+
 async function clearGoogleCookies(browser) {
   // Sadece IP'ye bağlı tracking cookie'leri sil — oturum cookie'lerini bırak
   // NID, 1P_JAR: IP referanslı, silinince captcha tetiklenmiyor
@@ -868,4 +893,4 @@ async function clearAllStorage(browser) {
   await session.detach().catch(() => {});
 }
 
-module.exports = { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, sessionWarmup, clearAllStorage, doFillerSearches };
+module.exports = { searchAndClick, closeExtraTabs, enableImageBlocking, clearGoogleCookies, clearAllGoogleCookies, sessionWarmup, clearAllStorage, doFillerSearches };

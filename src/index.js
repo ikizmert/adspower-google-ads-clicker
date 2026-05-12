@@ -3,7 +3,7 @@ const StealthPlugin = require("puppeteer-extra-plugin-stealth");
 puppeteer.use(StealthPlugin());
 const { config, queries, parseQuery } = require("./config");
 const provider = config.provider === "hyperbrowser" ? require("./hyperbrowser") : require("./adspower");
-const { checkStatus, openBrowser, closeBrowser, listProfiles, clearCache, applyStickyProxy } = provider;
+const { checkStatus, openBrowser, closeBrowser, listProfiles, applyStickyProxy } = provider;
 const { searchAndClick, closeExtraTabs, enableImageBlocking, clearAllGoogleCookies, sessionWarmup } = require("./searcher");
 const { createProfileStateManager } = require("./profile-state");
 const tracker = require("./profile-tracker");
@@ -121,13 +121,12 @@ async function runWarmupSession(profile, profileState) {
     console.log(`[${sessionLabel}] ✗ Warmup captcha → cold + 15dk cooldown`);
   } else {
     profileState.transition(profileId, "cold", { failure: false });
-    console.log(`[${sessionLabel}] ✗ Warmup hata → cold (normal cooldown)`);
+    console.log(`[${sessionLabel}] ✗ Warmup hata → cold (hemen tekrar denenebilir)`);
   }
   return result;
 }
 
 async function runClickSession(profile, profileState, parsedQueries, budgetTracker) {
-  let sessionFailureFlag = false;
   let captchaHit = false;
   const profileId = profile.id;
   const sessionLabel = `#${profile.serial || "?"}`;
@@ -188,12 +187,10 @@ async function runClickSession(profile, profileState, parsedQueries, budgetTrack
     if (result && result.error === "bot_detected") {
       console.log(`[${sessionLabel}] ⚠ Captcha (captcha_action=abort) — session terk`);
       captchaHit = true;
-      sessionFailureFlag = true;
       break;
     }
     if (result && result.error === "search_failed") {
       console.log(`[${sessionLabel}] ⚠ Bağlantı hatası — session terk`);
-      sessionFailureFlag = true;
       break;
     }
 
@@ -216,7 +213,7 @@ async function runClickSession(profile, profileState, parsedQueries, budgetTrack
   stats.completed++;
   if (sessionClicked === 0) stats.totalFailed++;
 
-  const updated = tracker.recordSession(profileId, sessionAdsFound);
+  tracker.recordSession(profileId, sessionAdsFound);
   console.log(`[${sessionLabel}] CLICK bitti | tıklanan: ${sessionClicked} | reklam: ${sessionAdsFound}${captchaHit ? " | captcha" : ""}`);
 
   if (sessionRankings.length > 0) {
@@ -345,6 +342,11 @@ async function run() {
     const decision = profileState.selectNextTask(candidateProfiles, hasPendingTargets());
     if (!decision) return false;
 
+    // warmup_enabled flag — warmup'ı devre dışı bırakmak için (test/debug için)
+    if (decision.type === "warmup" && config.behavior.warmup_enabled === false) {
+      return false;
+    }
+
     const profile = profiles.find((p) => p.id === decision.profileId);
     if (!profile) return false;
 
@@ -371,9 +373,12 @@ async function run() {
     })();
     active.set(taskPromise, profile.id);
     taskPromise.then((r) => {
-      if (r && (r.clicked > 0 || (r.hits || 0) > 0)) lastClickTime = Date.now();
+      // Click activity OR successful warmup updates lastClickTime
+      if (r && (r.clicked > 0 || (r.hits || 0) > 0 || r.success === true)) lastClickTime = Date.now();
       active.delete(taskPromise);
       console.log(`◀ Task bitti: #${profile.serial || profile.id} | aktif: ${active.size}`);
+    }).catch(() => {
+      active.delete(taskPromise);
     });
     return true;
   }

@@ -325,51 +325,108 @@ async function enableImageBlocking(browser) {
   });
 }
 
+async function humanTypeAndSubmit(page, query, tag = "") {
+  // Find the search input
+  const searchInput = await page.$('textarea[name="q"], input[name="q"]');
+  if (!searchInput) return false;
+
+  // Scroll to top so input is visible
+  await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+  await randomSleep(0.3, 0.7);
+
+  // Mouse move toward input (human-like)
+  const box = await searchInput.boundingBox().catch(() => null);
+  if (box) {
+    const targetX = box.x + box.width / 2 + (Math.random() - 0.5) * 40;
+    const targetY = box.y + box.height / 2 + (Math.random() - 0.5) * 8;
+    await humanMouseMove(page, targetX, targetY).catch(() => {});
+    await randomSleep(0.1, 0.3);
+  }
+
+  // Click + clear existing content (triple-click selects all, Backspace clears)
+  await searchInput.click({ clickCount: 3 }).catch(() => {});
+  await randomSleep(0.15, 0.35);
+  await page.keyboard.press("Backspace").catch(() => {});
+  await randomSleep(0.25, 0.55);
+
+  // Variable type tempo: Türkçe characters slightly slower, occasional thinking pauses, occasional fast bursts
+  for (const ch of query) {
+    let delay = 70 + Math.random() * 130;  // baseline 70-200ms
+    if (/[şçığüöŞÇİĞÜÖ]/.test(ch)) delay += 40 + Math.random() * 80;  // Türkçe char penalty
+    if (ch === " ") delay += 30 + Math.random() * 90;  // word boundary slower
+    if (Math.random() < 0.07) delay += 250 + Math.random() * 350;  // ~7% chance of "thinking pause"
+    if (Math.random() < 0.10) delay = 30 + Math.random() * 40;  // ~10% chance of fast burst
+    await page.keyboard.type(ch);
+    await sleep(delay);
+  }
+
+  // Wait for dropdown to appear
+  await randomSleep(0.9, 1.5);
+
+  // Try clicking a dropdown suggestion (70% of the time)
+  if (Math.random() < 0.70) {
+    try {
+      // Google's autosuggest dropdown selectors (multiple variations seen in production)
+      const suggestions = await page.$$('ul[role="listbox"] li[role="presentation"], ul[role="listbox"] [role="option"], [role="listbox"] li');
+      const visible = [];
+      for (const s of suggestions) {
+        const sbox = await s.boundingBox().catch(() => null);
+        if (sbox && sbox.width > 50 && sbox.height > 10) visible.push({ el: s, box: sbox });
+      }
+      if (visible.length > 0) {
+        // Pick top-3 randomly (most natural — users usually pick from first few)
+        const idx = Math.floor(Math.random() * Math.min(3, visible.length));
+        const target = visible[idx];
+        await humanMouseMove(page, target.box.x + target.box.width / 2, target.box.y + target.box.height / 2).catch(() => {});
+        await randomSleep(0.2, 0.45);
+        await Promise.all([
+          page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }),
+          target.el.click(),
+        ]);
+        console.log(`${tag}  dropdown onerisi tiklandi (#${idx + 1}/${visible.length})`);
+        return true;
+      }
+    } catch (e) {
+      // Dropdown click failed → fallback to Enter below
+      console.log(`${tag}  [!] Dropdown click basarisiz: ${e.message.split("\n")[0]} — Enter ile devam`);
+    }
+  }
+
+  // Fallback / 30% of the time: press Enter
+  try {
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }),
+      page.keyboard.press("Enter"),
+    ]);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
 async function doSearch(browser, page, query, tag = "") {
-  // 1. Mevcut sekme Google search sayfasındaysa aynı sekmede yeni arama yap (gerçekçi)
+  // 1. Mevcut sekme Google search sayfasındaysa aynı sekmede yeni arama yap
   if (page && !page.isClosed()) {
     try {
       const url = page.url();
       const onSearchPage = url.includes("google.") && url.includes("/search");
       if (onSearchPage) {
-        const searchInput = await page.$('textarea[name="q"], input[name="q"]');
-        if (searchInput) {
-          await searchInput.click({ clickCount: 3 });
-          await randomSleep(0.2, 0.4);
-          await page.keyboard.press("Backspace");
-          await randomSleep(0.3, 0.6);
-          await searchInput.type(query, { delay: 100 + Math.random() * 150 });
-          await randomSleep(0.8, 1.4);
-          await Promise.all([
-            page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }),
-            page.keyboard.press("Enter"),
-          ]);
-          if (page.url().includes("/search")) return page;
-        }
+        const ok = await humanTypeAndSubmit(page, query, tag);
+        if (ok && page.url().includes("/search")) return page;
       }
     } catch (e) {
       console.log(`${tag}[!] Aynı sekme arama başarısız: ${e.message.split("\n")[0]} — yeni sekme deneniyor`);
     }
   }
 
-  // 2. Yeni sekme aç → Google.com → arama kutusuna yaz → Enter
+  // 2. Yeni sekme aç → Google.com → arama kutusuna yaz → submit
   try {
     const newPage = await browser.newPage();
     await newPage.goto(GOOGLE_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
     await randomSleep(1, 2);
 
-    const searchInput = await newPage.$('textarea[name="q"], input[name="q"]');
-    if (searchInput) {
-      await searchInput.click();
-      await randomSleep(0.4, 0.9);
-      await searchInput.type(query, { delay: 100 + Math.random() * 150 });
-      await randomSleep(0.8, 1.4);
-      await Promise.all([
-        newPage.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 15000 }),
-        newPage.keyboard.press("Enter"),
-      ]);
-      if (newPage.url().includes("/search")) return newPage;
-    }
+    const ok = await humanTypeAndSubmit(newPage, query, tag);
+    if (ok && newPage.url().includes("/search")) return newPage;
   } catch (e) {
     console.log(`${tag}[!] Arama başarısız: ${e.message.split("\n")[0]}`);
   }

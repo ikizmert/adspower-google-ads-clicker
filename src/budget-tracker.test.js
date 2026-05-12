@@ -59,7 +59,8 @@ test("görünen domain miss reset", () => {
 
 test("allTargetsExhausted — hepsi exhausted ise true", () => {
   const { tracker } = makeTmpTracker();
-  for (let i = 0; i < 3; i++) tracker.update([], ["a.com", "b.com"]);
+  // Boş sayfa sinyal vermez; başka reklamcı varken target görünmüyorsa exhausted olur
+  for (let i = 0; i < 3; i++) tracker.update(["other.com"], ["a.com", "b.com"]);
   assert.strictEqual(tracker.allTargetsExhausted(["a.com", "b.com"]), true);
 });
 
@@ -109,4 +110,22 @@ test("substring match — kısa ad domain target uzun string'i match etmez (fals
   // Sayfada "cicek.com" görünüyor ama target "hizlicicek.com" — match etmemeli
   tracker.update(["cicek.com"], ["hizlicicek.com"]);
   assert.strictEqual(tracker.getMissed("hizlicicek.com"), 1, "hizlicicek.com görünmedi sayılmalı (cicek.com farklı domain)");
+});
+
+test("update: sayfada hiç reklam yoksa miss sayılmaz", () => {
+  const { tracker } = makeTmpTracker();
+  // 5 kez boş sayfa — exhausted olmamalı
+  for (let i = 0; i < 5; i++) {
+    tracker.update([], ["mycompetitor.com"]);
+  }
+  assert.strictEqual(tracker.isExhausted("mycompetitor.com"), false);
+  assert.strictEqual(tracker.getMissed("mycompetitor.com"), 0);
+});
+
+test("update: sayfada reklam var ama target yok → miss sayılır", () => {
+  const { tracker } = makeTmpTracker();
+  for (let i = 0; i < 3; i++) {
+    tracker.update(["other-competitor.com"], ["mycompetitor.com"]);
+  }
+  assert.strictEqual(tracker.isExhausted("mycompetitor.com"), true);
 });

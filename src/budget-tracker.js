@@ -37,6 +37,10 @@ function createTracker({ stateFile, threshold = 3 }) {
   }
 
   function update(allAdDomains, targetDomains) {
+    // Sayfada hiç reklam yoksa hiçbir sinyal yok — miss sayma
+    // ("rakip exhausted" anlamak için sayfada en az bir reklam görmek lazım)
+    if (allAdDomains.length === 0) return;
+
     const seenSet = new Set();
     for (const ad of allAdDomains) {
       seenSet.add(ad.toLowerCase());

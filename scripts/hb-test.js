@@ -76,6 +76,16 @@ async function isCaptchaPage(page) {
     const pages = await browser.pages();
     const page = pages[0] || (await browser.newPage());
 
+    // IP doğrulama — external proxy çalışıyor mu?
+    try {
+      console.log(`[hb-test] IP kontrol ediliyor (api.ipify.org)...`);
+      await page.goto("https://api.ipify.org?format=json", { waitUntil: "domcontentloaded", timeout: 15000 });
+      const ipBody = await page.evaluate(() => document.body.innerText);
+      console.log(`[hb-test] Browser IP: ${ipBody}`);
+    } catch (e) {
+      console.log(`[hb-test] IP check hatası: ${e.message.split("\n")[0]}`);
+    }
+
     console.log(`[hb-test] Google.com.tr'e gidiliyor...`);
     await page.goto("https://www.google.com.tr", { waitUntil: "domcontentloaded", timeout: 30000 });
     await sleep(1500);

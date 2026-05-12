@@ -640,34 +640,58 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
   page = searchResult;
   await randomSleep(1, 2);
 
-  // Captcha tespit → CapSolver ile çöz, çözülemezse session atla
+  // Captcha tespit → captcha_action'a göre davran:
+  //   "abort"          (default) → session terk
+  //   "wait"           → provider'in (hyperbrowser/external) çözmesini bekle, max 60s
+  //   "solve_continue" → mevcut CapSolver REST API ile çöz
   if (await isCaptchaPage(page)) {
-    if (config.behavior.captcha_action !== "solve_continue") {
-      console.log(`${tag}⚠ Captcha algılandı (captcha_action=abort) → session terk`);
-      return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
-    }
-    console.log(`${tag}⚠ Captcha algılandı — çözülmeye çalışılıyor...`);
-    const solved = await solveCaptcha(page, proxyApplied, tag);
-    if (!solved) {
-      return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
-    }
-    // Captcha çözüldü — sayfa arama sonuçlarına yönlendiyse devam et
-    await randomSleep(2, 4);
-    if (!page.url().includes("/search")) {
-      // Hala arama sonuçlarında değilse tekrar ara
-      console.log(`${tag}Captcha sonrası arama tekrarlanıyor...`);
-      const retryPage = await doSearch(browser, page, query, tag);
-      if (retryPage) {
-        page = retryPage;
+    const action = config.behavior.captcha_action;
+
+    if (action === "wait") {
+      // Provider (hyperbrowser solveCaptchas) çözmesini bekle, max 60s
+      console.log(`${tag}⚠ Captcha algılandı — provider çözmesini bekliyoruz (max 60s)...`);
+      let resolved = false;
+      for (let i = 0; i < 12; i++) {
+        await sleep(5000);
+        if (!(await isCaptchaPage(page))) {
+          console.log(`${tag}✓ Captcha provider tarafından çözüldü (${(i + 1) * 5}s)`);
+          resolved = true;
+          break;
+        }
+      }
+      if (!resolved) {
+        console.log(`${tag}✗ Captcha 60s'de çözülmedi → session terk`);
+        return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
+      }
+      if (!page.url().includes("/search")) {
+        const retryPage = await doSearch(browser, page, query, tag);
+        if (retryPage) page = retryPage;
+        else return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "search_failed" };
+      }
+      await randomSleep(1, 2);
+    } else if (action === "solve_continue") {
+      // CapSolver REST API ile çöz
+      console.log(`${tag}⚠ Captcha algılandı — çözülmeye çalışılıyor (CapSolver)...`);
+      const solved = await solveCaptcha(page, proxyApplied, tag);
+      if (!solved) {
+        return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
+      }
+      await randomSleep(2, 4);
+      if (!page.url().includes("/search")) {
+        console.log(`${tag}Captcha sonrası arama tekrarlanıyor...`);
+        const retryPage = await doSearch(browser, page, query, tag);
+        if (retryPage) page = retryPage;
+        else return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "search_failed" };
       } else {
-        return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "search_failed" };
+        console.log(`${tag}✓ Captcha çözüldü, arama sonuçlarında devam`);
+      }
+      if (await isCaptchaPage(page)) {
+        console.log(`${tag}⚠ Captcha çözümü sonrası hala captcha — session atlanıyor`);
+        return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
       }
     } else {
-      console.log(`${tag}✓ Captcha çözüldü, arama sonuçlarında devam`);
-    }
-    // Son kontrol
-    if (await isCaptchaPage(page)) {
-      console.log(`${tag}⚠ Captcha çözümü sonrası hala captcha — session atlanıyor`);
+      // default: abort
+      console.log(`${tag}⚠ Captcha algılandı (captcha_action=abort) → session terk`);
       return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
     }
   }

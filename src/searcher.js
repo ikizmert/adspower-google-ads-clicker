@@ -134,6 +134,10 @@ async function doFillerSearches(browser, count, proxyApplied, tag = "") {
 
       // Captcha kontrolü — solve_continue politikası
       if (await isCaptchaPage(page)) {
+        if (config.behavior.captcha_action !== "solve_continue") {
+          console.log(`${tag}⚠ Filler "${fq}"da captcha (captcha_action=abort) → session terk`);
+          return { hadCaptcha: true, solved: false };
+        }
         console.log(`${tag}⚠ Filler "${fq}"da captcha — çözmeye çalışılıyor`);
         const solved = await solveCaptcha(page, proxyApplied, tag);
         if (!solved) {
@@ -572,6 +576,10 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
 
   // Captcha tespit → CapSolver ile çöz, çözülemezse session atla
   if (await isCaptchaPage(page)) {
+    if (config.behavior.captcha_action !== "solve_continue") {
+      console.log(`${tag}⚠ Captcha algılandı (captcha_action=abort) → session terk`);
+      return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
+    }
     console.log(`${tag}⚠ Captcha algılandı — çözülmeye çalışılıyor...`);
     const solved = await solveCaptcha(page, proxyApplied, tag);
     if (!solved) {

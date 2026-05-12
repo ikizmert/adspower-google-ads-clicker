@@ -69,7 +69,7 @@ async function resetIfNeeded(profiles) {
     if (reason) {
       console.log(`Profil "${p.name || p.id}" sıfırlanıyor (sebep: ${reason})...`);
       // clearCache (AdsPower delete-cache) KALDIRILDI — extension storage'ı da siliyordu
-      // Sadece tracker sıfırlanır, cookie temizleme session sonunda clearGoogleCookies ile yapılıyor
+      // Sadece tracker sıfırlanır, cookie temizleme click session sonunda clearAllGoogleCookies ile yapılıyor
       tracker.removeProfile(p.id);
     }
   }

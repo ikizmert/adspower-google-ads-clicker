@@ -1,5 +1,4 @@
 const fs = require("fs");
-const path = require("path");
 
 const VALID_STATES = ["cold", "warming", "warm", "clicking", "cooling"];
 
@@ -36,7 +35,7 @@ function createProfileStateManager({ stateFile, successCooldownMs, failureCooldo
   }
 
   function getState(profileId) {
-    return ensure(profileId);
+    return { ...ensure(profileId) };
   }
 
   function transition(profileId, newState, opts = {}) {

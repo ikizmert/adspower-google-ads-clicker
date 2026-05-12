@@ -29,8 +29,10 @@ function randomSid() {
 async function openBrowser(profileId) {
   const hb = getClient();
   const hbConfig = config.hyperbrowser || {};
+  // Docs: "Pair stealth with proxies for better results". Default açık.
   const sessionOpts = {
     solveCaptchas: hbConfig.solve_captchas === true,
+    useStealth: hbConfig.use_stealth !== false,
     adblock: false,
   };
 

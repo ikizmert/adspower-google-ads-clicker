@@ -44,7 +44,8 @@ async function isCaptchaPage(page) {
   const solveCaptchas = hbCfg.solve_captchas === true;
   const useProxy = hbCfg.use_proxy === true; // default false — paid feature
 
-  const sessionOpts = { solveCaptchas, adblock: false };
+  const useStealth = hbCfg.use_stealth !== false; // default true
+  const sessionOpts = { solveCaptchas, useStealth, adblock: false };
 
   // BYO external proxy — doğru SDK formatı: flat proxyServer/Username/Password + useProxy: true
   // (Free plan'da useProxy: true bloklu, paid plan gerekli)
@@ -66,7 +67,7 @@ async function isCaptchaPage(page) {
   } else {
     sessionOpts.useProxy = useProxy;
   }
-  console.log(`[hb-test] Session açılıyor (solveCaptchas=${solveCaptchas}, externalProxy=${externalProxyInfo})...`);
+  console.log(`[hb-test] Session açılıyor (solveCaptchas=${solveCaptchas}, useStealth=${useStealth}, externalProxy=${externalProxyInfo})...`);
 
   const session = await hb.sessions.create(sessionOpts);
   console.log(`[hb-test] Session ID: ${session.id}`);

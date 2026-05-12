@@ -200,3 +200,22 @@ test("resetStaleBusyStates: reset edilen profil cooldown'a girmez (failure deği
   assert.equal(mgr.isAvailable("p1"), true);
   fs.unlinkSync(file);
 });
+
+test("transientFails: increment/reset/get çalışır", () => {
+  const file = tmpFile();
+  const mgr = createProfileStateManager({ stateFile: file, successCooldownMs: 1000, failureCooldownMs: 2000 });
+  assert.equal(mgr.getTransientFails("p1"), 0);
+  assert.equal(mgr.incrementTransientFails("p1"), 1);
+  assert.equal(mgr.incrementTransientFails("p1"), 2);
+  assert.equal(mgr.getTransientFails("p1"), 2);
+  mgr.resetTransientFails("p1");
+  assert.equal(mgr.getTransientFails("p1"), 0);
+  fs.unlinkSync(file);
+});
+
+test("transientFails: yeni profil için 0 default", () => {
+  const file = tmpFile();
+  const mgr = createProfileStateManager({ stateFile: file, successCooldownMs: 1000, failureCooldownMs: 2000 });
+  assert.equal(mgr.getTransientFails("newprofile"), 0);
+  if (fs.existsSync(file)) fs.unlinkSync(file);
+});

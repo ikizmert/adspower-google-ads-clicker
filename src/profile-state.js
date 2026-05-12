@@ -30,6 +30,7 @@ function createProfileStateManager({ stateFile, successCooldownMs, failureCooldo
         warmupCount: 0,
         clickCount: 0,
         currentSid: null,
+        transientFails: 0,
       };
     }
     return data.profiles[profileId];
@@ -111,6 +112,33 @@ function createProfileStateManager({ stateFile, successCooldownMs, failureCooldo
     return ensure(profileId).currentSid;
   }
 
+  function incrementTransientFails(profileId) {
+    const p = ensure(profileId);
+    p.transientFails = (p.transientFails || 0) + 1;
+    atomicWrite(stateFile, data);
+    return p.transientFails;
+  }
+
+  function resetTransientFails(profileId) {
+    const p = ensure(profileId);
+    if (p.transientFails > 0) {
+      p.transientFails = 0;
+      atomicWrite(stateFile, data);
+    }
+  }
+
+  function getTransientFails(profileId) {
+    return ensure(profileId).transientFails || 0;
+  }
+
+  function setCustomCooldown(profileId, ms) {
+    const p = ensure(profileId);
+    p.state = "cooling";
+    p.lastTransitionAt = Date.now();
+    p.cooldownUntil = Date.now() + ms;
+    atomicWrite(stateFile, data);
+  }
+
   function save() {
     atomicWrite(stateFile, data);
   }
@@ -134,7 +162,7 @@ function createProfileStateManager({ stateFile, successCooldownMs, failureCooldo
     return count;
   }
 
-  return { getState, save, transition, tick, selectNextTask, isAvailable, getSid, setSid, resetStaleBusyStates };
+  return { getState, save, transition, tick, selectNextTask, isAvailable, getSid, setSid, resetStaleBusyStates, incrementTransientFails, resetTransientFails, getTransientFails, setCustomCooldown };
 }
 
 module.exports = { createProfileStateManager, VALID_STATES };

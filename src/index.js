@@ -93,9 +93,15 @@ async function runWarmupSession(profile, profileState) {
     const { wsEndpoint } = await openBrowser(profileId);
     browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
   } catch (e) {
-    console.error(`[${sessionLabel}] Warmup browser açılamadı (transient): ${e.message.split("\n")[0]}`);
-    // ECONNREFUSED gibi transient hatalar — profili hemen tekrar denenebilir yap
-    profileState.transition(profileId, "cold", { failure: false });
+    const fails = profileState.incrementTransientFails(profileId);
+    console.error(`[${sessionLabel}] Warmup browser açılamadı (transient #${fails}): ${e.message.split("\n")[0]}`);
+    if (fails >= 3) {
+      console.log(`[${sessionLabel}] ⚠ ${fails} ardışık warmup transient fail → 3dk kısa cooldown`);
+      profileState.setCustomCooldown(profileId, 3 * 60 * 1000);
+      profileState.resetTransientFails(profileId);
+    } else {
+      profileState.transition(profileId, "cold", { failure: false });
+    }
     return { success: false };
   }
 
@@ -119,6 +125,7 @@ async function runWarmupSession(profile, profileState) {
 
   if (result.success) {
     profileState.transition(profileId, "warm");
+    profileState.resetTransientFails(profileId);
     console.log(`[${sessionLabel}] ✓ Warmup OK → warm`);
   } else if (result.hadCaptcha) {
     profileState.transition(profileId, "cold", { failure: true });
@@ -148,9 +155,15 @@ async function runClickSession(profile, profileState, parsedQueries, budgetTrack
     const { wsEndpoint } = await openBrowser(profileId);
     browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
   } catch (e) {
-    console.error(`[${sessionLabel}] Click browser açılamadı (transient): ${e.message.split("\n")[0]}`);
-    // ECONNREFUSED gibi transient hatalar — profil warm kalsın, sonraki click attempt'te tekrar denesin
-    profileState.transition(profileId, "warm");
+    const fails = profileState.incrementTransientFails(profileId);
+    console.error(`[${sessionLabel}] Click browser açılamadı (transient #${fails}): ${e.message.split("\n")[0]}`);
+    if (fails >= 3) {
+      console.log(`[${sessionLabel}] ⚠ ${fails} ardışık transient fail → 3dk kısa cooldown`);
+      profileState.setCustomCooldown(profileId, 3 * 60 * 1000);
+      profileState.resetTransientFails(profileId);
+    } else {
+      profileState.transition(profileId, "warm");
+    }
     return { clicked: 0, hits: 0, adsFound: 0 };
   }
 
@@ -229,6 +242,7 @@ async function runClickSession(profile, profileState, parsedQueries, budgetTrack
   try { browser.disconnect(); await closeBrowser(profileId); } catch {}
 
   profileState.transition(profileId, "cooling", { failure: captchaHit });
+  profileState.resetTransientFails(profileId);
 
   stats.completed++;
   if (sessionClicked === 0) stats.totalFailed++;

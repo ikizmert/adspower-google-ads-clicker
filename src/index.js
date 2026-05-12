@@ -93,8 +93,9 @@ async function runWarmupSession(profile, profileState) {
     const { wsEndpoint } = await openBrowser(profileId);
     browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
   } catch (e) {
-    console.error(`[${sessionLabel}] Warmup browser açılamadı: ${e.message.split("\n")[0]}`);
-    profileState.transition(profileId, "cold", { failure: true });
+    console.error(`[${sessionLabel}] Warmup browser açılamadı (transient): ${e.message.split("\n")[0]}`);
+    // ECONNREFUSED gibi transient hatalar — profili hemen tekrar denenebilir yap
+    profileState.transition(profileId, "cold", { failure: false });
     return { success: false };
   }
 
@@ -147,8 +148,9 @@ async function runClickSession(profile, profileState, parsedQueries, budgetTrack
     const { wsEndpoint } = await openBrowser(profileId);
     browser = await puppeteer.connect({ browserWSEndpoint: wsEndpoint });
   } catch (e) {
-    console.error(`[${sessionLabel}] Click browser açılamadı: ${e.message.split("\n")[0]}`);
-    profileState.transition(profileId, "cooling", { failure: true });
+    console.error(`[${sessionLabel}] Click browser açılamadı (transient): ${e.message.split("\n")[0]}`);
+    // ECONNREFUSED gibi transient hatalar — profil warm kalsın, sonraki click attempt'te tekrar denesin
+    profileState.transition(profileId, "warm");
     return { clicked: 0, hits: 0, adsFound: 0 };
   }
 

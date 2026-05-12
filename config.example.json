@@ -22,8 +22,8 @@
   },
   "behavior": {
     "mode": "model_1",
-    "click_browser_count": 7,
-    "warmup_browser_count": 15,
+    "click_browser_count": 5,
+    "warmup_browser_count": 8,
     "captcha_action": "abort",
     "warmup_enabled": true,
     "post_click_cooldown_minutes": 5,

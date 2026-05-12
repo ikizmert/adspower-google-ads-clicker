@@ -43,9 +43,10 @@ test("exhausted domain miss artmaya devam etmez (idempotent)", () => {
   const { tracker } = makeTmpTracker();
   for (let i = 0; i < 5; i++) tracker.update(["other.com"], ["foo.com"]);
   assert.strictEqual(tracker.isExhausted("foo.com"), true);
-  // Sonra görünse bile exhausted kalır (gün boyunca)
-  tracker.update(["foo.com"], ["foo.com"]);
-  assert.strictEqual(tracker.isExhausted("foo.com"), true);
+  // Exhausted domain görünmemeye devam ederse miss daha da artmaz (idempotent)
+  // Not: artık exhausted sticky değil — domain tekrar görünürse un-exhausts
+  tracker.update(["other.com"], ["foo.com"]);
+  assert.strictEqual(tracker.isExhausted("foo.com"), true); // hala exhausted (görünmedi)
 });
 
 test("görünen domain miss reset", () => {
@@ -128,4 +129,22 @@ test("update: sayfada reklam var ama target yok → miss sayılır", () => {
     tracker.update(["other-competitor.com"], ["mycompetitor.com"]);
   }
   assert.strictEqual(tracker.isExhausted("mycompetitor.com"), true);
+});
+
+test("exhausted domain seen again → un-exhausted (sticky bug fixed)", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "tracker-"));
+  const file = path.join(tmpDir, "budget-state.json");
+  const { createTracker } = require("./budget-tracker");
+  const tracker = createTracker({ stateFile: file, threshold: 3 });
+  // Trigger exhaustion: 3 misses with other ads on page
+  for (let i = 0; i < 3; i++) {
+    tracker.update(["other.com"], ["target.com"]);
+  }
+  assert.equal(tracker.isExhausted("target.com"), true);
+
+  // Target appears → should un-exhaust
+  tracker.update(["target.com"], ["target.com"]);
+  assert.equal(tracker.isExhausted("target.com"), false);
+  assert.equal(tracker.getMissed("target.com"), 0);
+  fs.unlinkSync(file);
 });

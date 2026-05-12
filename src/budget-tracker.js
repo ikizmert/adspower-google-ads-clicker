@@ -49,14 +49,15 @@ function createTracker({ stateFile, threshold = 3 }) {
     for (const target of targetDomains) {
       const t = target.toLowerCase();
       const d = ensureDomain(t);
-      if (d.exhausted) continue;
 
       // Substring match (target "denizcicekci" sayfada "denizcicekcilik.com" varsa eşleş)
       const seen = [...seenSet].some((s) => s.includes(t));
       if (seen) {
         d.missed = 0;
         d.lastSeenAt = now;
-      } else {
+        d.exhausted = false;  // re-appearing target un-exhausts itself
+      } else if (!d.exhausted) {
+        // exhausted domains: don't increment miss further, but un-exhaust above if they reappear
         d.missed += 1;
         if (d.missed >= threshold) d.exhausted = true;
       }

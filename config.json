@@ -37,6 +37,6 @@
     "block_images": false,
     "headless": false,
     "check_shopping_ads": true,
-    "adaptive_targeting": { "enabled": true, "missed_threshold": 3 }
+    "adaptive_targeting": { "enabled": false, "missed_threshold": 15 }
   }
 }

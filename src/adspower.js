@@ -82,8 +82,8 @@ function randomSid() {
   return sid;
 }
 
-async function applyStickyProxy(profileId) {
-  const sid = randomSid();
+async function applyStickyProxy(profileId, overrideSid = null) {
+  const sid = overrideSid || randomSid();
   let appliedUser = "";
   const rotation = config.proxy_rotation;
 

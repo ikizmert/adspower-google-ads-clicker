@@ -4,7 +4,7 @@ puppeteer.use(StealthPlugin());
 const { config, queries, parseQuery } = require("./config");
 const provider = config.provider === "hyperbrowser" ? require("./hyperbrowser") : require("./adspower");
 const { checkStatus, openBrowser, closeBrowser, listProfiles, applyStickyProxy } = provider;
-const { searchAndClick, closeExtraTabs, enableImageBlocking, clearAllGoogleCookies, sessionWarmup, doFillerSearches } = require("./searcher");
+const { searchAndClick, closeExtraTabs, enableImageBlocking, clearAllGoogleCookies, sessionWarmup } = require("./searcher");
 const { createProfileStateManager } = require("./profile-state");
 const tracker = require("./profile-tracker");
 const clickCounter = require("./click-counter");
@@ -173,21 +173,8 @@ async function runClickSession(profile, profileState, parsedQueries, budgetTrack
   await closeExtraTabs(browser);
   // NOT: Click session'da cookie temizleme YOK — warmup'tan kalan cookies kullanılır.
 
-  // Filler aramalar — target query'lerden önce 1-2 alakasız Google araması + organik tıklama
-  // (Google session'da "doğal kullanıcı davranışı" sinyali)
-  const fillerCount = config.behavior.filler_queries_per_session || 0;
-  if (fillerCount > 0) {
-    const fillerResult = await doFillerSearches(browser, fillerCount, proxyApplied, `[${sessionLabel}] `).catch(() => ({ hadCaptcha: false }));
-    if (fillerResult.hadCaptcha && !fillerResult.solved) {
-      console.log(`[${sessionLabel}] ⚠ Filler captcha (captcha_action=abort) — session terk`);
-      try { await clearAllGoogleCookies(browser); } catch {}
-      try { browser.disconnect(); await closeBrowser(profileId); } catch {}
-      profileState.transition(profileId, "cooling", { failure: true });
-      stats.completed++;
-      stats.totalFailed++;
-      return { clicked: 0, hits: 0, adsFound: 0 };
-    }
-  }
+  // Filler queries permanently disabled — warmup (FB/News/Gmail) + human-like search yeterli.
+  // (filler_queries_per_session config alanı artık göz ardı ediliyor.)
 
   // Passive mod — manuel debug için browser açık tut
   if (process.argv.includes("--passive")) {

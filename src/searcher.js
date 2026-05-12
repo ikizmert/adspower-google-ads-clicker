@@ -648,10 +648,12 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
     const action = config.behavior.captcha_action;
 
     if (action === "wait") {
-      // Provider (hyperbrowser solveCaptchas) çözmesini bekle, max 60s
-      console.log(`${tag}⚠ Captcha algılandı — provider çözmesini bekliyoruz (max 60s)...`);
+      // Provider (hyperbrowser solveCaptchas) çözmesini bekle
+      const waitSec = config.behavior.captcha_wait_seconds || 90;
+      const iterations = Math.ceil(waitSec / 5);
+      console.log(`${tag}⚠ Captcha algılandı — provider çözmesini bekliyoruz (max ${waitSec}s)...`);
       let resolved = false;
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < iterations; i++) {
         await sleep(5000);
         if (!(await isCaptchaPage(page))) {
           console.log(`${tag}✓ Captcha provider tarafından çözüldü (${(i + 1) * 5}s)`);
@@ -660,7 +662,7 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
         }
       }
       if (!resolved) {
-        console.log(`${tag}✗ Captcha 60s'de çözülmedi → session terk`);
+        console.log(`${tag}✗ Captcha ${waitSec}s'de çözülmedi → session terk`);
         return { ads: 0, hits: 0, totalAdsOnPage: 0, rankings: [], notFound: hitDomains, error: "bot_detected" };
       }
       if (!page.url().includes("/search")) {

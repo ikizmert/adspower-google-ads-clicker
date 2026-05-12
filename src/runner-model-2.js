@@ -145,17 +145,26 @@ async function runModel2(provider, parsedQueries) {
     return true;
   }
 
-  // İlk batch — stagger ile (cluster pattern azaltmak için)
+  // Cluster pattern önlemek için session açılışları arasında uzun stagger.
+  // Google 5 concurrent session'ı 10 saniyede burst görürse hepsine captcha.
+  const staggerSec = config.behavior.session_stagger_seconds || 20;
+  const staggerJitter = staggerSec * 0.5; // ±%50 jitter
+
+  // İlk batch — yavaş yavaş aç
   for (let i = 0; i < concurrency; i++) {
     if (shouldStop()) break;
-    if (i > 0) await sleep(2000 + Math.random() * 3000);
+    if (i > 0) {
+      const wait = (staggerSec + (Math.random() - 0.5) * 2 * staggerJitter) * 1000;
+      await sleep(wait);
+    }
     if (!launchSession()) break;
   }
 
-  // Continuous queue
+  // Continuous queue — yine stagger ile
   while (!shouldStop()) {
     while (active.size < concurrency && !shouldStop()) {
-      await sleep(1500 + Math.random() * 1500);
+      const wait = (staggerSec + (Math.random() - 0.5) * 2 * staggerJitter) * 1000;
+      await sleep(wait);
       if (!launchSession()) break;
     }
     if (active.size === 0) {

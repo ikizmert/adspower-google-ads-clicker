@@ -186,9 +186,13 @@ async function sessionWarmup(page, tag = "") {
   }
   await randomSleep(1, 3);
 
-  // 2. Google News — bir habere tıkla
+  // 2. Google News (captcha riski yüksek nokta)
   try {
     await page.goto("https://news.google.com", { waitUntil: "domcontentloaded", timeout: 20000 });
+    if (await isCaptchaPage(page)) {
+      console.log(`${tag}  ⚠ Google News'de captcha → warmup terk`);
+      return { success: false, hadCaptcha: true };
+    }
     await randomSleep(2, 4);
     for (let i = 0; i < 3; i++) {
       await page.evaluate((amount) => {
@@ -219,6 +223,10 @@ async function sessionWarmup(page, tag = "") {
   // 3. Gmail
   try {
     await page.goto("https://mail.google.com", { waitUntil: "domcontentloaded", timeout: 20000 });
+    if (await isCaptchaPage(page)) {
+      console.log(`${tag}  ⚠ Gmail'de captcha → warmup terk`);
+      return { success: false, hadCaptcha: true };
+    }
     await randomSleep(3, 6);
     await page.evaluate(() => {
       if (typeof window !== "undefined") window.scrollBy({ top: 200, behavior: "smooth" });
@@ -231,6 +239,7 @@ async function sessionWarmup(page, tag = "") {
   await randomSleep(1, 2);
 
   console.log(`${tag}✓ Warmup tamamlandı`);
+  return { success: true, hadCaptcha: false };
 }
 
 

@@ -36,6 +36,18 @@ async function runOneSession(provider, queryDef, sessionLabel) {
     }
     await closeExtraTabs(browser).catch(() => {});
 
+    // IP doğrulama (BYO proxy gerçekten çalışıyor mu — Mac/dashboard üst panel "Proxy: US" yanıltıcı olabilir)
+    if (config.behavior.log_browser_ip !== false) {
+      try {
+        const pages = await browser.pages();
+        const ipPage = pages[0] || (await browser.newPage());
+        await ipPage.goto("https://api.ipify.org?format=json", { waitUntil: "domcontentloaded", timeout: 10000 });
+        const ipBody = await ipPage.evaluate(() => document.body.innerText);
+        const ipMatch = /"ip":"([^"]+)"/.exec(ipBody);
+        if (ipMatch) console.log(`[${sessionLabel}]   Browser IP: ${ipMatch[1]}`);
+      } catch {}
+    }
+
     // Tek query, tek session — agresif turnover
     result = await searchAndClick(
       browser,

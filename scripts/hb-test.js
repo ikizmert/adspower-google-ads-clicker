@@ -50,7 +50,12 @@ async function isCaptchaPage(page) {
   // BYO external proxy — doğru SDK formatı: flat proxyServer/Username/Password + useProxy: true
   // (Free plan'da useProxy: true bloklu, paid plan gerekli)
   let externalProxyInfo = "yok";
-  if (config.proxy && config.proxy.host) {
+  if (hbCfg.use_managed_proxy === true) {
+    sessionOpts.useProxy = true;
+    sessionOpts.proxyCountry = hbCfg.proxy_country || "TR";
+    if (hbCfg.proxy_city) sessionOpts.proxyCity = hbCfg.proxy_city;
+    externalProxyInfo = `managed country=${sessionOpts.proxyCountry}${hbCfg.proxy_city ? " city=" + hbCfg.proxy_city : ""}`;
+  } else if (config.proxy && config.proxy.host) {
     const randomSid = () => {
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
       let s = "";

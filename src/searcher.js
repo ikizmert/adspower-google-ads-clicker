@@ -7,6 +7,17 @@ const fs = require("fs");
 const path = require("path");
 
 const FILLER_QUERIES_PATH = path.join(__dirname, "..", "filler-queries.txt");
+const SERP_LOG_PATH = path.join(__dirname, "..", "serp-log.txt");
+
+function logSerpScan({ query, page, totalAds, adDomains, targetAds }) {
+  try {
+    const now = new Date();
+    const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+    const ads = adDomains && adDomains.length > 0 ? adDomains.join(", ") : "-";
+    const line = `${ts} | "${query}" p${page} | total=${totalAds} | hedef=${targetAds} | [${ads}]\n`;
+    fs.appendFileSync(SERP_LOG_PATH, line);
+  } catch {}
+}
 
 function loadFillerQueries() {
   try {
@@ -696,7 +707,16 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
     const searchHits = pg <= maxHitPages && hitDomains.some((d) => !clickedHitDomains.has(d));
 
     const adDomainsList = allAdDomains.length > 0 ? ` [${allAdDomains.join(", ")}]` : "";
-    console.log(`${tag}[Sayfa ${pg}] Toplam reklam: ${totalAds}${adDomainsList} | Hedef reklam: ${searchAds ? ads.length : "atlandı"} | Organik hit: ${searchHits ? organics.length : "atlandı"}`);
+    console.log(`${tag}[Sayfa ${pg}] "${query}" | Toplam reklam: ${totalAds}${adDomainsList} | Hedef reklam: ${searchAds ? ads.length : "atlandı"} | Organik hit: ${searchHits ? organics.length : "atlandı"}`);
+
+    // serp-log.txt'ye kalıcı kayıt
+    logSerpScan({
+      query,
+      page: pg,
+      totalAds,
+      adDomains: [...allAdDomains],
+      targetAds: searchAds ? ads.length : 0,
+    });
 
     // Reklamlara tıkla (yeni sekmede) - domain başına max 2-3
     if (searchAds) {

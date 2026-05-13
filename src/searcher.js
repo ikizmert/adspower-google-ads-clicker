@@ -758,7 +758,7 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
             const tabUrl = (() => { try { return newTab.url(); } catch { return "?"; } })();
             console.log(`${tag}✓ Reklam tıklandı: ${ad.domain} (${sessionAdClicks[ad.domain]}/${maxAdClicksPerDomain}) → ${tabUrl}`);
             try { await browseAdPage(newTab, tag); } catch {}
-            try { await newTab.close(); } catch {}
+            // Reklam sekmesi session sonuna kadar arka planda açık kalır (organic gibi)
             await randomSleep(1, 2);
           } else {
             console.log(`${tag}✗ Reklam yeni sekmede açılamadı: ${ad.domain}`);

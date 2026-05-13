@@ -38,8 +38,6 @@ async function takeScreenshot(page, domain, tag = "", meta = {}) {
       return;
     }
     const url = page.url();
-    console.log(`${tag}📸 Screenshot çağrıldı: domain=${domain} url=${url.substring(0, 60)}`);
-
     await sleep(2000);
 
     if (page.isClosed()) {
@@ -652,8 +650,8 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
   const clickedHitDomains = new Set();
   const loggedHitDomains = new Set();
   const rankings = [];
-  const maxAdPages = 3;
-  const maxHitPages = 5;
+  const maxAdPages = config.behavior.max_pages_for_ads || 3;
+  const maxHitPages = config.behavior.max_pages_for_hits || 5;
   const maxPages = Math.max(maxAdPages, maxHitPages);
 
   for (let pg = 1; pg <= maxPages; pg++) {

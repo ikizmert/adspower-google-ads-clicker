@@ -34,29 +34,33 @@ fs.watch(queriesPath, { persistent: false }, () => {
 });
 
 function parseQuery(line) {
-  let rest = line.trim();
-  let adDomains = [];
-  let hitDomains = [];
+  // Format: "search terms" [@/#]ad1[@/#]ad2... [!]hit1[!]hit2...
+  // - @ ve # her ikisi de reklam (ad) marker — sırası önemli değil
+  // - ! hit (organik takip) marker
+  // Örnek: "kuşadası çiçek @a.com#b.com !x.com!y.com#z.com"
+  //   ads:  [a.com, b.com, z.com]  ← @, #, # hepsi ad
+  //   hits: [x.com, y.com]
+  const trimmed = line.trim();
+  const firstMarker = trimmed.search(/[@#!]/);
+  if (firstMarker === -1) return { search: trimmed, adDomains: [], hitDomains: [] };
 
-  const parts = rest.split("!");
-  rest = parts[0].trim();
-  for (let i = 1; i < parts.length; i++) {
-    // Hit grup içinde # ile çoklu domain (reklamla aynı format)
-    const group = parts[i].trim();
-    if (!group) continue;
-    for (const d of group.split("#").map((s) => s.trim().toLowerCase()).filter(Boolean)) {
-      hitDomains.push(d);
-    }
+  const search = trimmed.substring(0, firstMarker).trim();
+  const rest = trimmed.substring(firstMarker);
+
+  // Tokenize: split by markers, keep marker info (whitespace allowed around markers)
+  const tokens = rest.split(/\s*([@#!])\s*/).filter((s) => s.length > 0);
+
+  const adDomains = [];
+  const hitDomains = [];
+  for (let i = 0; i < tokens.length; i += 2) {
+    const marker = tokens[i];
+    const value = (tokens[i + 1] || "").trim().toLowerCase();
+    if (!value) continue;
+    if (marker === "@" || marker === "#") adDomains.push(value);
+    else if (marker === "!") hitDomains.push(value);
   }
 
-  const adIndex = rest.indexOf("@");
-  if (adIndex !== -1) {
-    const adPart = rest.substring(adIndex + 1).trim();
-    rest = rest.substring(0, adIndex).trim();
-    adDomains = adPart.split("#").map((d) => d.trim().toLowerCase()).filter(Boolean);
-  }
-
-  return { search: rest, adDomains, hitDomains };
+  return { search, adDomains, hitDomains };
 }
 
 module.exports = { get config() { return config; }, get queries() { return queries; }, parseQuery };

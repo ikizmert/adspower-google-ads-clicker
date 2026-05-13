@@ -74,7 +74,7 @@ async function takeScreenshot(page, domain, tag = "", meta = {}) {
         if (!el) {
           el = document.createElement("div");
           el.id = id;
-          el.style.cssText = "position:fixed;width:22px;height:22px;border:3px solid #fff;border-radius:50%;background:rgba(255,40,40,0.85);box-shadow:0 0 6px rgba(0,0,0,0.6);z-index:2147483647;pointer-events:none;transform:translate(-50%,-50%);";
+          el.style.cssText = "position:fixed;width:10px;height:10px;border:1.5px solid #fff;border-radius:50%;background:rgba(255,40,40,0.9);box-shadow:0 0 3px rgba(0,0,0,0.5);z-index:2147483647;pointer-events:none;transform:translate(-50%,-50%);";
           document.body.appendChild(el);
         }
         el.style.left = x + "px";

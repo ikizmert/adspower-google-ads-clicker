@@ -65,7 +65,33 @@ async function takeScreenshot(page, domain, tag = "", meta = {}) {
     if (meta.page) suffix += `_p${meta.page}`;
     if (meta.position) suffix += `_s${meta.position}`;
     const filePath = path.join(dir, `${timeStr}${suffix}.png`);
+
+    // Mouse imleci görseli — meta.cursor varsa screenshot'a kırmızı bir marker bas
+    if (meta.cursor && typeof meta.cursor.x === "number" && typeof meta.cursor.y === "number") {
+      await page.evaluate(({ x, y }) => {
+        const id = "__shot_cursor__";
+        let el = document.getElementById(id);
+        if (!el) {
+          el = document.createElement("div");
+          el.id = id;
+          el.style.cssText = "position:fixed;width:22px;height:22px;border:3px solid #fff;border-radius:50%;background:rgba(255,40,40,0.85);box-shadow:0 0 6px rgba(0,0,0,0.6);z-index:2147483647;pointer-events:none;transform:translate(-50%,-50%);";
+          document.body.appendChild(el);
+        }
+        el.style.left = x + "px";
+        el.style.top = y + "px";
+      }, meta.cursor).catch(() => {});
+    }
+
     await page.screenshot({ path: filePath, fullPage: false });
+
+    // Marker'ı temizle (sonraki etkileşimi etkilemesin)
+    if (meta.cursor) {
+      await page.evaluate(() => {
+        const el = document.getElementById("__shot_cursor__");
+        if (el) el.remove();
+      }).catch(() => {});
+    }
+
     console.log(`${tag}📸 Screenshot kaydedildi: ${monthDir}/${dayDir}/${safeDomain}/${timeStr}${suffix}.png`);
   } catch (e) {
     console.log(`${tag}📸 Screenshot hatası: ${e.message.split("\n")[0]}`);
@@ -683,14 +709,18 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
         const domainCount = sessionAdClicks[ad.domain] || 0;
         if (domainCount >= maxAdClicksPerDomain) continue;
         try {
-          // Tıklamadan önce screenshot (mouse reklam üstünde)
+          // Tıklamadan önce screenshot (mouse reklam üstünde, imleç marker'lı)
           if (config.behavior.screenshot_on_click) {
+            let cursor = null;
             try {
               await ad.element.scrollIntoView().catch(() => {});
               const box = await ad.element.boundingBox().catch(() => null);
-              if (box) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
+              if (box) {
+                cursor = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+                await page.mouse.move(cursor.x, cursor.y).catch(() => {});
+              }
             } catch {}
-            await takeScreenshot(page, ad.domain, tag, { query, page: pg });
+            await takeScreenshot(page, ad.domain, tag, { query, page: pg, cursor });
           }
           const newTab = await clickInNewTab(browser, page, ad.element);
           if (newTab) {
@@ -727,14 +757,18 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
       }
 
       try {
-        // Tıklamadan önce screenshot
+        // Tıklamadan önce screenshot (imleç marker'lı)
         if (config.behavior.screenshot_on_click) {
+          let cursor = null;
           try {
             await hit.element.scrollIntoView().catch(() => {});
             const box = await hit.element.boundingBox().catch(() => null);
-            if (box) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
+            if (box) {
+              cursor = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+              await page.mouse.move(cursor.x, cursor.y).catch(() => {});
+            }
           } catch {}
-          await takeScreenshot(page, hit.domain, tag, { query, page: pg, position: hit.position });
+          await takeScreenshot(page, hit.domain, tag, { query, page: pg, position: hit.position, cursor });
         }
         const newTab = await clickInNewTab(browser, page, hit.element);
         if (newTab) {

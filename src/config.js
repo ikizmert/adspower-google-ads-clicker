@@ -41,8 +41,12 @@ function parseQuery(line) {
   const parts = rest.split("!");
   rest = parts[0].trim();
   for (let i = 1; i < parts.length; i++) {
-    const d = parts[i].trim().toLowerCase();
-    if (d) hitDomains.push(d);
+    // Hit grup içinde # ile çoklu domain (reklamla aynı format)
+    const group = parts[i].trim();
+    if (!group) continue;
+    for (const d of group.split("#").map((s) => s.trim().toLowerCase()).filter(Boolean)) {
+      hitDomains.push(d);
+    }
   }
 
   const adIndex = rest.indexOf("@");

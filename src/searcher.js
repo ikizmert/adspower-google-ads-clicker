@@ -338,18 +338,16 @@ async function setupImageBlocking(page) {
   page.on("request", (req) => {
     const type = req.resourceType();
     const url = req.url();
-    // Sadece google.com sayfalarında image bloklama yap.
-    // Reklam landing page'lerinde (adelcicek.com vb.) tüm asset'ler yüklenmeli —
-    // hem doğal kullanıcı sinyali, hem advertiser-side fraud filter için.
+    // Google sayfalarında image yüklensin (fingerprint için gerekli, bot sinyali olmasin).
+    // Reklam landing page'lerinde (adelcicek.com vb.) image blokla (sadece browseAdPage scroll/mouse).
     const pageUrl = (() => { try { return page.url(); } catch { return ""; } })();
     const isGooglePage = /\bgoogle\.[a-z.]+/i.test(pageUrl);
-    if (!isGooglePage) {
+    if (isGooglePage) {
       req.continue().catch(() => {});
       return;
     }
-    // Captcha kaynaklarını koruyalım (recaptcha, gstatic)
-    const isCaptchaResource = url.includes("recaptcha") || url.includes("captcha") || url.includes("gstatic.com");
-    if ((type === "image" || type === "media" || type === "font") && !isCaptchaResource) {
+    // Landing page'de image/media/font blok
+    if (type === "image" || type === "media" || type === "font") {
       req.abort().catch(() => {});
     } else {
       req.continue().catch(() => {});

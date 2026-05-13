@@ -519,8 +519,11 @@ async function clickInNewTab(browser, page, element) {
     await humanMouseMove(page, x, y).catch(() => {});
     await randomSleep(0.2, 0.5);
 
-    // Yöntem 1: Cmd/Ctrl + Click
-    const modifier = process.platform === "darwin" ? "Meta" : "Control";
+    // Yöntem 1: Ctrl + Click (yeni sekme aç)
+    // ÖNEMLİ: process.platform LOKAL makineyi kontrol eder, ama remote browser
+    // (hyperbrowser Linux container, AdsPower Windows) Mac'te bile Ctrl kullanır.
+    // Mac Chrome'da Cmd, ama bu kod uzaktan browser'a komut gönderiyor → Ctrl.
+    const modifier = "Control";
     try {
       await page.keyboard.down(modifier);
       await randomSleep(0.05, 0.15);
@@ -712,7 +715,9 @@ async function searchAndClick(browser, query, adDomains, hitDomains, label = "",
     }
 
     // Bulunan tüm organik hit domain'lere tıkla (her domain için bir kez) - sadece pg <= 5
-    if (searchHits) {
+    // Config flag: hit_domain_click false ise organik tıklama yapma (sadece reklam tıklat)
+    const hitClickEnabled = config.behavior.hit_domain_click !== false;
+    if (searchHits && hitClickEnabled) {
     for (const hit of organics) {
       if (clickedHitDomains.has(hit.matchedHit)) continue;
       const globalPosition = (pg - 1) * 10 + hit.position;
